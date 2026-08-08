@@ -1,0 +1,2989 @@
+<title>The Jacobian Lens, for FlipLens</title>
+
+<style>
+/* ============================================================
+   Design tokens — light is the base; dark redefines tokens only.
+   Palette follows the repo's own figures: blue = model / SAE feature,
+   amber = the causal flip direction (experiment C), grey = baselines.
+   ============================================================ */
+:root{
+  --bg:#E9EDEF;
+  --panel:#FFFFFF;
+  --panel-2:#F2F5F7;
+  --sunk:#E4EAED;
+  --rule:#C4CFD4;
+  --rule-soft:#DCE3E7;
+  --ink:#0C1418;
+  --ink-2:#48595F;
+  --ink-3:#5A6C74;
+  --on-accent:#FFFFFF;
+  --blue:#0A6C9E;
+  --blue-2:#0E86C4;
+  --blue-wash:#DCEAF3;
+  --amber:#B0510D;
+  --amber-2:#D2701F;
+  --amber-wash:#F7E7D7;
+  --grey:#8B9BA3;
+  --warn:#98281D;
+  --warn-wash:#F6E1DE;
+  --ok:#1A705C;
+  /* chart marks only — the documented categorical palette, validated against this
+     page's chart surface (--sunk) in both modes via scripts/validate_palette.js.
+     slot 1 = the subject, slot 2 = the second series, mute = de-emphasis. */
+  --viz-1:#2A78D6;
+  --viz-2:#EB6834;
+  --viz-mute:#898781;
+  --viz-grid:#E1E0D9;
+  --viz-axis:#C3C2B7;
+  --shadow:0 1px 2px rgba(12,20,24,.06), 0 8px 24px -12px rgba(12,20,24,.18);
+  --glow:radial-gradient(120% 80% at 50% 0%, rgba(255,255,255,.9) 0%, rgba(255,255,255,0) 70%);
+
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua","Source Serif 4",Georgia,"Times New Roman",serif;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+
+  --measure:69ch;
+  --bleed:250px;
+  --wide:1120px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0A1115;
+    --panel:#111A1F;
+    --panel-2:#152128;
+    --sunk:#0D161B;
+    --rule:#26343B;
+    --rule-soft:#1C282E;
+    --ink:#E2EBEF;
+    --ink-2:#9AACB5;
+    --ink-3:#7D919D;
+    --on-accent:#08141A;
+    --blue:#59AEDE;
+    --blue-2:#7CC4EC;
+    --blue-wash:#10303F;
+    --amber:#E88C40;
+    --amber-2:#F2A868;
+    --amber-wash:#38230F;
+    --grey:#788992;
+    --warn:#E88170;
+    --warn-wash:#37201C;
+    --ok:#4CBFA3;
+  --viz-1:#3987E5;
+  --viz-2:#D95926;
+  --viz-mute:#898781;
+  --viz-grid:#2C2C2A;
+  --viz-axis:#383835;
+    --viz-1:#3987E5;
+    --viz-2:#D95926;
+    --viz-mute:#898781;
+    --viz-grid:#2C2C2A;
+    --viz-axis:#383835;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+    --glow:radial-gradient(120% 80% at 50% 0%, rgba(120,180,215,.07) 0%, rgba(120,180,215,0) 70%);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0A1115;
+  --panel:#111A1F;
+  --panel-2:#152128;
+  --sunk:#0D161B;
+  --rule:#26343B;
+  --rule-soft:#1C282E;
+  --ink:#E2EBEF;
+  --ink-2:#9AACB5;
+  --ink-3:#7D919D;
+  --on-accent:#08141A;
+  --blue:#59AEDE;
+  --blue-2:#7CC4EC;
+  --blue-wash:#10303F;
+  --amber:#E88C40;
+  --amber-2:#F2A868;
+  --amber-wash:#38230F;
+  --grey:#788992;
+  --warn:#E88170;
+  --warn-wash:#37201C;
+  --ok:#4CBFA3;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+  --glow:radial-gradient(120% 80% at 50% 0%, rgba(120,180,215,.07) 0%, rgba(120,180,215,0) 70%);
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--serif);
+  font-size:17.5px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+
+/* ---------- reading column, with a measured breakout ----------
+   Sections are ordinary blocks inside the text column, so .wide cannot be a grid
+   placement — it is a symmetric negative margin, enabled only at a width where the
+   grid is guaranteed to have both bleed columns at their full --bleed. */
+.page{
+  display:grid;
+  /* the gutter is page padding, not a track: inside the grid, 100% resolves against
+     the content box, so min(--measure, 100%) can never exceed the space available */
+  padding-inline:1.1rem;
+  grid-template-columns:
+    [full-start] minmax(0,1fr)
+    [wide-start] minmax(0,var(--bleed))
+    [text-start] min(var(--measure),100%)
+    [text-end] minmax(0,var(--bleed))
+    [wide-end] minmax(0,1fr)
+    [full-end];
+  row-gap:0;
+}
+.page > *{grid-column:text}
+/* the .wide breakout itself is declared at the END of this stylesheet: .panel and
+   .tbl-wrap set `margin` shorthands, and at equal specificity the later rule wins. */
+
+/* ---------- top bar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:40;
+  background:var(--bg);
+  background:color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter:saturate(1.4) blur(10px);
+  border-bottom:1px solid var(--rule-soft);
+}
+@supports not (backdrop-filter: blur(2px)){ .topbar{background:var(--bg)} }
+.topbar-in{
+  max-width:var(--wide);margin:0 auto;padding:.5rem 1.1rem;
+  display:flex;align-items:center;gap:1rem;
+}
+.brand{
+  font-family:var(--sans);font-size:11px;font-weight:650;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-2);white-space:nowrap;
+}
+.brand b{color:var(--blue);font-weight:700}
+.jump{
+  margin-left:auto;display:flex;gap:.15rem;overflow-x:auto;scrollbar-width:none;
+}
+.jump::-webkit-scrollbar{display:none}
+.jump a{
+  font-family:var(--sans);font-size:11px;letter-spacing:.05em;color:var(--ink-3);
+  text-decoration:none;padding:.3rem .45rem;border-radius:4px;white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+}
+.jump a:hover{color:var(--ink);background:var(--panel-2)}
+.progress{height:2px;background:var(--blue);width:0%;transition:width .1s linear}
+@media (max-width:820px){.jump{display:none}}
+
+/* ---------- masthead ---------- */
+.masthead{padding:4.5rem 0 1.2rem}
+.eyebrow{
+  font-family:var(--sans);font-size:11px;font-weight:650;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-3);margin:0 0 1.1rem;
+}
+h1{
+  font-family:var(--serif);font-weight:600;font-size:clamp(2.3rem,6.2vw,3.5rem);
+  line-height:1.03;letter-spacing:-.018em;margin:0 0 1rem;text-wrap:balance;
+}
+h1 em{font-style:italic;color:var(--blue)}
+.standfirst{
+  font-size:1.16rem;line-height:1.55;color:var(--ink-2);margin:0 0 1.8rem;
+  text-wrap:pretty;
+}
+.byline{
+  font-family:var(--sans);font-size:12px;color:var(--ink-3);
+  border-top:1px solid var(--rule-soft);padding-top:.9rem;
+  display:flex;flex-wrap:wrap;gap:.4rem 1.2rem;
+}
+.byline code{font-size:11.5px}
+
+/* ---------- sections ---------- */
+section{padding:2.4rem 0 .6rem;scroll-margin-top:70px}
+h2{
+  font-family:var(--serif);font-weight:600;font-size:clamp(1.5rem,3.6vw,2.05rem);
+  line-height:1.14;letter-spacing:-.012em;margin:.2rem 0 .5rem;text-wrap:balance;
+}
+h3{
+  font-family:var(--serif);font-weight:600;font-size:1.16rem;line-height:1.3;
+  margin:2rem 0 .5rem;text-wrap:balance;
+}
+h4{
+  font-family:var(--sans);font-weight:650;font-size:12px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--ink-3);margin:1.5rem 0 .5rem;
+}
+.snum{
+  font-family:var(--sans);font-size:11px;font-weight:650;letter-spacing:.14em;
+  color:var(--blue);display:block;margin-bottom:.55rem;
+  font-variant-numeric:tabular-nums;
+}
+p{margin:0 0 1.05rem;text-wrap:pretty}
+a{color:var(--blue);text-underline-offset:.18em;text-decoration-thickness:1px}
+a:hover{color:var(--blue-2)}
+strong{font-weight:650}
+em{font-style:italic}
+code,kbd{font-family:var(--mono);font-size:.855em;font-variant-ligatures:none}
+p code,li code,td code,th code{
+  background:var(--panel-2);border:1px solid var(--rule-soft);
+  padding:.06em .32em;border-radius:3px;white-space:nowrap;
+}
+ul,ol{margin:0 0 1.05rem;padding-left:1.35rem}
+li{margin:.32rem 0}
+li::marker{color:var(--ink-3)}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+.lede{font-size:1.06rem;color:var(--ink-2)}
+.small{font-size:.9rem;color:var(--ink-2)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.k-amber{color:var(--amber)}
+.k-grey{color:var(--ink-3)}
+
+/* ---------- panels ---------- */
+.panel{
+  background:var(--panel);
+  border:1px solid var(--rule);
+  border-radius:6px;
+  box-shadow:var(--shadow);
+  margin:1.6rem 0;
+  overflow:hidden;
+  position:relative;
+}
+.panel::before{
+  content:"";position:absolute;inset:0;background:var(--glow);pointer-events:none;
+}
+.panel > *{position:relative}
+.panel-head{
+  display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;
+  padding:.75rem 1.05rem;border-bottom:1px solid var(--rule-soft);
+  background:var(--panel-2);
+}
+.panel-title{
+  font-family:var(--sans);font-size:11.5px;font-weight:650;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-2);
+}
+.panel-sub{font-family:var(--sans);font-size:11.5px;color:var(--ink-3);margin-left:auto}
+.panel-body{padding:1.05rem}
+.panel-foot{
+  padding:.7rem 1.05rem;border-top:1px solid var(--rule-soft);
+  font-family:var(--sans);font-size:12.5px;line-height:1.5;color:var(--ink-2);
+  background:var(--panel-2);
+}
+
+/* ---------- controls ---------- */
+.ctrls{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));
+  gap:.75rem 1.1rem;margin:0 0 1rem;
+}
+.ctrl{display:flex;flex-direction:column;gap:.22rem}
+.ctrl label{
+  font-family:var(--sans);font-size:10.5px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-3);display:flex;justify-content:space-between;gap:.5rem;
+}
+.ctrl label output{
+  font-family:var(--mono);font-size:11px;color:var(--ink);letter-spacing:0;
+  font-variant-numeric:tabular-nums;text-transform:none;
+}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;cursor:pointer;margin:0;
+}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--rule);border-radius:2px}
+input[type=range]::-moz-range-track{height:3px;background:var(--rule);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--blue);
+  margin-top:-7.5px;border:2px solid var(--panel);box-shadow:0 0 0 1px var(--blue);
+}
+input[type=range]::-moz-range-thumb{
+  width:14px;height:14px;border-radius:50%;background:var(--blue);
+  border:2px solid var(--panel);box-shadow:0 0 0 1px var(--blue);
+}
+.btn{
+  font-family:var(--sans);font-size:12.5px;font-weight:600;letter-spacing:.01em;
+  padding:.42rem .85rem;border-radius:4px;border:1px solid var(--rule);
+  background:var(--panel-2);color:var(--ink);cursor:pointer;
+}
+.btn:hover{border-color:var(--blue);color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--on-accent)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn[aria-pressed=true]{background:var(--blue-wash);border-color:var(--blue);color:var(--blue)}
+.btnrow{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center}
+select{
+  font-family:var(--sans);font-size:12.5px;padding:.36rem .5rem;border-radius:4px;
+  border:1px solid var(--rule);background:var(--panel-2);color:var(--ink);
+}
+.chips{display:flex;gap:.3rem;flex-wrap:wrap}
+.chip{
+  font-family:var(--sans);font-size:11.5px;padding:.28rem .6rem;border-radius:99px;
+  border:1px solid var(--rule);background:var(--panel-2);color:var(--ink-2);cursor:pointer;
+}
+.chip[aria-pressed=true]{background:var(--blue);border-color:var(--blue);color:var(--panel)}
+.switch{
+  display:inline-flex;align-items:center;gap:.45rem;font-family:var(--sans);font-size:12px;
+  color:var(--ink-2);cursor:pointer;
+}
+/* `.ctrl label` (0,1,1) would otherwise win over `.switch` (0,1,0) */
+.ctrl label.switch{
+  display:inline-flex;justify-content:flex-start;text-transform:none;
+  letter-spacing:0;font-size:12px;font-weight:400;color:var(--ink-2);
+}
+.switch input{accent-color:var(--blue);width:15px;height:15px}
+
+/* ---------- readouts ---------- */
+.stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
+  gap:1px;background:var(--rule-soft);border:1px solid var(--rule-soft);border-radius:4px;overflow:hidden;
+}
+.stat{background:var(--panel);padding:.6rem .7rem}
+.stat .lbl{
+  font-family:var(--sans);font-size:9.5px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-3);display:block;margin-bottom:.15rem;
+}
+.stat .val{
+  font-family:var(--mono);font-size:1.02rem;font-variant-numeric:tabular-nums;
+  color:var(--ink);display:block;line-height:1.2;
+}
+.stat .val.b{color:var(--blue)}
+.stat .val.a{color:var(--amber)}
+.stat .val.w{color:var(--warn)}
+.stat .sub{font-family:var(--sans);font-size:10px;color:var(--ink-3)}
+
+canvas{display:block;max-width:100%}
+.canvas-wrap{overflow-x:auto;overflow-y:hidden;border-radius:4px;background:var(--sunk);border:1px solid var(--rule-soft);position:relative}
+.viz-tip{
+  position:absolute;left:0;top:0;pointer-events:none;opacity:0;
+  transform:translate(-50%,calc(-100% - 10px));
+  max-width:min(320px,92%);white-space:normal;
+  background:var(--panel);border:1px solid var(--rule);border-radius:5px;
+  box-shadow:var(--shadow);padding:.4rem .6rem;font-family:var(--sans);font-size:11.5px;
+  color:var(--ink-2);white-space:nowrap;z-index:6;
+}
+.viz-tip[data-on="1"]{opacity:1}
+.viz-tip[data-below="1"]{transform:translate(-50%,12px)}
+@media (prefers-reduced-motion:no-preference){ .viz-tip{transition:opacity .09s linear} }
+.viz-tip .tt{
+  display:block;color:var(--ink-3);font-size:10px;letter-spacing:.07em;
+  text-transform:uppercase;margin-bottom:.2rem;
+}
+.viz-tip .rr{display:flex;gap:.4rem;align-items:center;line-height:1.5}
+.viz-tip .kk{width:11px;height:2px;border-radius:1px;flex:none}
+.viz-tip .vv{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);font-weight:600}
+.viz-tip .nn{color:var(--ink-3)}
+.viz-table{margin-top:.75rem}
+.viz-table[hidden]{display:none}
+.viz-table table{font-size:12px}
+.viz-toggle{
+  font-family:var(--sans);font-size:11px;font-weight:600;letter-spacing:.05em;
+  border:1px solid var(--rule);background:var(--panel-2);color:var(--ink-2);
+  border-radius:4px;padding:.22rem .55rem;cursor:pointer;
+}
+.viz-toggle:hover{border-color:var(--blue);color:var(--blue)}
+.viz-toggle[aria-expanded="true"]{background:var(--blue-wash);border-color:var(--blue);color:var(--blue)}
+.canvas-wrap canvas{margin:0 auto}
+
+/* ---------- code ---------- */
+.code{
+  background:var(--sunk);border:1px solid var(--rule-soft);border-radius:5px;
+  overflow:hidden;margin:1.2rem 0;
+}
+.code-head{
+  font-family:var(--sans);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);padding:.5rem .85rem;border-bottom:1px solid var(--rule-soft);
+  display:flex;justify-content:space-between;gap:1rem;
+}
+pre{margin:0;padding:.85rem;font-family:var(--mono);font-size:12.5px;line-height:1.62;overflow-x:auto}
+pre code{background:none;border:0;padding:0;white-space:pre}
+.c-kw{color:var(--amber)}
+.c-fn{color:var(--blue)}
+.c-str{color:var(--ok)}
+.c-com{color:var(--ink-3);font-style:italic}
+.c-num{color:var(--blue-2)}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;margin:1.3rem 0;border:1px solid var(--rule-soft);border-radius:5px}
+table{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:13px}
+th,td{padding:.5rem .7rem;text-align:left;border-bottom:1px solid var(--rule-soft);white-space:nowrap}
+thead th{
+  font-size:10.5px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--ink-3);background:var(--panel-2);
+}
+tbody tr:last-child td{border-bottom:0}
+td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+tbody tr:hover{background:var(--panel-2)}
+.hi{color:var(--blue);font-weight:650}
+.lo{color:var(--warn)}
+
+/* ---------- callouts ---------- */
+.note{
+  border-left:2px solid var(--blue);background:var(--blue-wash);
+  padding:.85rem 1rem;border-radius:0 4px 4px 0;margin:1.4rem 0;font-size:.95rem;
+}
+.note.caution{border-left-color:var(--warn);background:var(--warn-wash)}
+.note.finding{border-left-color:var(--amber);background:var(--amber-wash)}
+.note p:last-child{margin-bottom:0}
+.note .tag{
+  font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  display:block;margin-bottom:.35rem;color:var(--blue);
+}
+.note.caution .tag{color:var(--warn)}
+.note.finding .tag{color:var(--amber)}
+
+/* ---------- figures ---------- */
+figure{margin:1.6rem 0}
+figure svg{min-width:560px;max-width:100%;height:auto;display:block;margin:0 auto;color:var(--ink-2)}
+figcaption{
+  font-family:var(--sans);font-size:12px;line-height:1.5;color:var(--ink-3);
+  margin-top:.6rem;text-align:center;text-wrap:pretty;
+}
+.fig-wrap{overflow-x:auto}
+/* the section-02 diagram takes its accent from the palette, not a literal */
+.dg-a-f{fill:var(--blue)}
+.dg-a-s{stroke:var(--blue)}
+.dg-a-t{fill:var(--blue)}
+.dg-on{fill:var(--on-accent)}
+
+/* ---------- misc ---------- */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem}
+@media (max-width:700px){.two{grid-template-columns:1fr}}
+.legend{
+  display:flex;gap:1rem;flex-wrap:wrap;font-family:var(--sans);font-size:11.5px;
+  color:var(--ink-2);margin-top:.6rem;
+}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:.35rem;vertical-align:-1px}
+.kbd{
+  font-family:var(--sans);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-3);border:1px solid var(--rule);border-radius:3px;padding:.1rem .3rem;
+}
+footer{
+  padding:3rem 0 4rem;margin-top:2rem;border-top:1px solid var(--rule-soft);
+  font-family:var(--sans);font-size:12.5px;color:var(--ink-3);
+}
+footer a{color:var(--ink-2)}
+.tocard{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1px;
+  background:var(--rule-soft);border:1px solid var(--rule-soft);border-radius:5px;overflow:hidden;margin:1.8rem 0 0;
+}
+.tocard a{
+  background:var(--panel);padding:.7rem .85rem;text-decoration:none;display:block;
+}
+.tocard a:hover{background:var(--panel-2)}
+.tocard .n{
+  font-family:var(--sans);font-size:10px;font-weight:650;letter-spacing:.12em;color:var(--blue);
+  display:block;font-variant-numeric:tabular-nums;
+}
+.tocard .t{font-family:var(--serif);font-size:.95rem;color:var(--ink);display:block;line-height:1.3;margin-top:.15rem}
+.tocard .d{font-family:var(--sans);font-size:11px;color:var(--ink-3);display:block;margin-top:.2rem;line-height:1.35}
+
+/* ---------- caveat accordion ---------- */
+#cav-body details:last-child{border-bottom:0 !important}
+#cav-body summary::-webkit-details-marker{display:none}
+#cav-body summary::marker{content:""}
+#cav-body summary::before{
+  content:"+";font-family:var(--mono);color:var(--ink-3);font-size:13px;line-height:1;
+}
+#cav-body details[open] summary::before{content:"−"}
+#cav-body summary:hover{background:var(--panel-2)}
+#cav-body details[open] summary{color:var(--blue)}
+#cav-body pre{font-size:12px}
+#cav-body p{margin-bottom:.7rem}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms !important;transition-duration:.001ms !important}
+  html{scroll-behavior:auto}
+}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+
+/* ---------- the breakout, last so it beats the margin shorthands above ----------
+   Sections are plain blocks inside the text column, so .wide cannot be a grid
+   placement. At >=1200px both bleed tracks are guaranteed to sit at their full
+   --bleed, so a symmetric negative margin lands exactly on the wide-start /
+   wide-end lines. Below that the element simply fills the reading column and its
+   contents scroll inside .canvas-wrap / .tbl-wrap. */
+.wide{margin-left:0;margin-right:0}
+@media (min-width:1200px){
+  .wide{
+    margin-left:calc(-1 * var(--bleed));
+    margin-right:calc(-1 * var(--bleed));
+  }
+}
+
+/* ---------- jlens-specific ---------- */
+/* the lineage table wants three equal columns that wrap on narrow screens */
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:1.1rem}
+@media (max-width:820px){.three{grid-template-columns:1fr}}
+.mini{
+  background:var(--panel-2);border:1px solid var(--rule-soft);border-radius:5px;padding:.8rem .9rem;
+}
+.mini h5{
+  font-family:var(--sans);font-size:10.5px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 .4rem;
+}
+.mini p{font-size:.92rem;margin:0 0 .5rem}
+.mini p:last-child{margin:0}
+/* a display equation, centred, in the mono face */
+.eq{
+  font-family:var(--mono);font-size:13.5px;text-align:center;color:var(--ink);
+  background:var(--sunk);border:1px solid var(--rule-soft);border-radius:5px;
+  padding:.75rem .6rem;margin:1.1rem 0;overflow-x:auto;white-space:nowrap;
+}
+.eq .an{color:var(--amber)}
+.eq .bl{color:var(--blue)}
+.eq .gy{color:var(--ink-3)}
+/* pull-quote for a sourced verbatim line */
+blockquote{
+  margin:1.3rem 0;padding:.15rem 0 .15rem 1rem;border-left:2px solid var(--rule);
+  color:var(--ink-2);font-size:1rem;
+}
+blockquote p{margin:0 0 .4rem}
+blockquote cite{
+  display:block;font-family:var(--sans);font-size:11.5px;font-style:normal;color:var(--ink-3);
+}
+blockquote cite a{color:var(--ink-3)}
+/* the phrasing list inside the cluster explorer */
+.phr{
+  display:grid;gap:1px;background:var(--rule-soft);border:1px solid var(--rule-soft);
+  border-radius:4px;overflow:hidden;max-height:330px;overflow-y:auto;
+}
+.phr-row{
+  display:grid;grid-template-columns:1fr auto auto;gap:.6rem;align-items:center;
+  background:var(--panel);padding:.32rem .6rem;font-size:12.5px;font-family:var(--sans);
+}
+.phr-row .q{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.phr-row .m{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11.5px;color:var(--ink-3)}
+.phr-row .a{
+  font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.08em;
+  padding:.08rem .38rem;border-radius:3px;min-width:34px;text-align:center;
+}
+.phr-row .a.yes{background:var(--blue-wash);color:var(--blue)}
+.phr-row .a.no{background:var(--amber-wash);color:var(--amber)}
+.phr-row.odd{background:var(--panel-2)}
+/* the caveat accordion, same shape as the SAE page */
+#cav-body details{border-bottom:1px solid var(--rule-soft)}
+#cav-body summary{
+  display:flex;gap:.6rem;align-items:baseline;cursor:pointer;padding:.6rem .3rem;
+  font-family:var(--sans);font-size:13.5px;color:var(--ink);list-style:none;
+}
+#cav-body summary .cn{
+  font-family:var(--mono);font-size:11px;color:var(--ink-3);min-width:1.4em;
+  font-variant-numeric:tabular-nums;
+}
+#cav-body summary .cs{flex:1}
+#cav-body summary .cw{
+  font-family:var(--sans);font-size:9.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  padding:.1rem .38rem;border-radius:3px;white-space:nowrap;
+}
+#cav-body summary .cw.a{background:var(--warn-wash);color:var(--warn)}
+#cav-body summary .cw.b{background:var(--amber-wash);color:var(--amber)}
+#cav-body summary .cw.c{background:var(--panel-2);color:var(--ink-3);border:1px solid var(--rule-soft)}
+#cav-body .cbody{padding:.1rem .3rem 1rem 2rem}
+#cav-body .cbody .fix{
+  font-family:var(--sans);font-size:12.5px;color:var(--ink-2);
+  border-left:2px solid var(--ok);padding-left:.7rem;margin-top:.6rem;
+}
+#cav-body .cbody .fix b{color:var(--ok);font-weight:650}
+</style>
+
+<div class="topbar">
+  <div class="topbar-in">
+    <span class="brand"><b>FlipLens</b> &nbsp;/&nbsp; the jacobian lens</span>
+    <nav class="jump" aria-label="Sections">
+      <a href="#s1">01 The question</a>
+      <a href="#s2">02 One dot product</a>
+      <a href="#s3">03 The lineage</a>
+      <a href="#s4">04 Calculus = regression</a>
+      <a href="#s5">05 Your recipe</a>
+      <a href="#s6">06 A flip, close up</a>
+      <a href="#s7">07 The result</a>
+      <a href="#s8">08 Lens vs patch</a>
+      <a href="#s9">09 Caveats</a>
+      <a href="#s10">10 Run it</a>
+    </nav>
+  </div>
+  <div class="progress" id="progress"></div>
+</div>
+
+<div class="page">
+
+<header class="masthead">
+  <p class="eyebrow">An interactive primer, built on <code>scripts/experiments/jlens.py</code></p>
+  <h1>The Jacobian lens, <em>as you actually use it</em></h1>
+  <p class="standfirst">
+    Your lens asks one question of every decoder layer: <i>given the vector sitting at the answer
+    position right now, what yes/no margin is the rest of this network disposed to produce?</i> It
+    answers by differentiating through the remaining layers instead of guessing. This page teaches
+    everything that sentence contains — the lens family it belongs to, the theorem that says its
+    weights are a regression fit in disguise, the one statistic it actually reports, and the six
+    places the implementation is weaker than the write-up — with live labs you can run in this tab.
+  </p>
+  <p class="byline">
+    <span>Companion to <a href="sae_explainer.html">the sparse-autoencoder explainer</a></span>
+    <span>Numbers read from <code>results_gemma/jlens_gemma/</code> and <code>results_transfer/jlens/</code></span>
+    <span>Nothing on this page recomputes a published result</span>
+  </p>
+</header>
+
+<!-- ================================================================= 01 -->
+<section id="s1">
+  <span class="snum">01 — The question</span>
+  <h2>Where does a paraphrase flip get decided?</h2>
+
+  <p class="lede">
+    Two phrasings of one question, over one chest radiograph. <i>Is there evidence of pleural
+    effusion?</i> and <i>is there any pleural effusion?</i> mean the same thing and carry the same
+    answer. The model says yes to one and no to the other. Six decoder layers separate the tokens
+    from that decision. Which of them changed its mind?
+  </p>
+
+  <p>
+    You cannot read the answer off the layers directly, because a residual stream is not written in
+    the language of answers. It is a 384-dimensional vector that every layer writes into and every
+    later layer reads out of. Anthropic's framing of this, which the rest of the page leans on:
+  </p>
+
+  <blockquote>
+    <p>“We generally think of the residual stream as a communication channel, since it doesn't do
+    any processing itself and all layers communicate through it.”</p>
+    <p>“The residual stream has a deeply linear structure.”</p>
+    <cite>Elhage et al., <a href="https://transformer-circuits.pub/2021/framework/index.html">A Mathematical Framework for Transformer Circuits</a> (2021), §&nbsp;Virtual Weights and the Residual Stream as a Communication Channel</cite>
+  </blockquote>
+
+  <p>
+    A <b>lens</b> is any rule that turns one of those intermediate vectors into a prediction about
+    what the network will eventually output. Every lens is a bet about the layers you are skipping
+    over. The three that matter here make three different bets, and the differences are the whole
+    subject of <a href="#s3">section 03</a>.
+  </p>
+
+  <div class="note">
+    <span class="tag">The claim this method supports</span>
+    <p>
+      From the repository README: <i>“Across paraphrases, flipping clusters diverge about
+      <b>8.9&times;</b> more than stable ones, from layer 0, with a divergence-vs-flip correlation
+      of <b>0.81</b>.”</i> Both numbers come from
+      <code>results_gemma/jlens_gemma/jlens.json</code>. By the end of this page you should be able
+      to say exactly what statistic each is, which model it was measured on, what it would take to
+      break it, and — the part the README does not say — what the same measurement gives on the
+      scaled model (<b>2.2&times;</b> and <b>0.26</b>).
+    </p>
+  </div>
+
+  <p>
+    One thing to fix in place before anything else, because it decides what a lens can and cannot
+    tell you here. The docstring of <code>jlens.py</code> already gets the ordering right, and it is
+    worth keeping:
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>scripts/experiments/jlens.py</span><span>line 11</span></div>
+<pre><code><span class="c-com"># The lens is corroboration only; the causal patch (experiment_e) is primary.</span></code></pre>
+  </div>
+
+  <p>
+    A lens is a <i>reading</i>. It tells you what a state looks like. It does not tell you that the
+    state caused anything, because nothing was intervened on. The causal claim in this project comes
+    from experiment C, which edits the activation and watches the answer move. What the lens adds is
+    resolution: it is cheap enough to run on all 11,319 evaluation rows, where the patch runs on 20.
+  </p>
+</section>
+
+<!-- ================================================================= 02 -->
+<section id="s2">
+  <span class="snum">02 — One dot product</span>
+  <h2>The decision is already linear, one layer too late</h2>
+
+  <p>
+    Start at the end, where there is no approximation at all. Baby-MedGemma does not have a
+    classification head. It reads yes and no out of the tied input-embedding matrix, the way
+    MedGemma does:
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>src/babygemma/gemma_model.py</span><span>lines 92–95</span></div>
+<pre><code>h = out.last_hidden_state
+pooled = h[torch.arange(B, device=h.device), ans_idx]
+W = self.gemma.get_input_embeddings().weight          <span class="c-com"># tied LM head [vocab, dim]</span>
+logits = pooled @ W[[self.no_id, self.yes_id]].T      <span class="c-com"># [B, 2] = [no, yes]</span></code></pre>
+  </div>
+
+  <p>
+    So the yes/no margin — the single scalar this whole project is about — is a dot product of one
+    384-vector with one fixed direction:
+  </p>
+
+  <div class="eq">
+    margin(x) = logit<span class="gy">yes</span> &minus; logit<span class="gy">no</span>
+    = <span class="bl">h<span class="gy">final</span></span> &middot;
+    <span class="an">(W<span class="gy">yes</span> &minus; W<span class="gy">no</span>)</span>
+  </div>
+
+  <p>
+    That is worth sitting with. The model's answer is the sign of a projection onto a single
+    direction in a 384-dimensional space. Everything the network does is in service of pushing one
+    vector to one side or the other of the hyperplane orthogonal to
+    <span class="num k-amber">W<sub>yes</sub> &minus; W<sub>no</sub></span>.
+  </p>
+
+  <h3>The catch, which is not cosmetic</h3>
+
+  <p>
+    <code>last_hidden_state</code> is not the output of the last decoder layer. In HuggingFace's
+    <code>Gemma3TextModel</code> the layer loop finishes and <i>then</i> a final RMSNorm runs. The
+    margin is exactly linear in the <b>post-norm</b> vector, and the lens never sees that vector —
+    <code>jlens.py</code> hooks <code>model.gemma.layers[L]</code>, which fires before the norm.
+    Verified against <code>transformers 4.57.1</code> on the real module:
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>verification, transformers 4.57.1</span><span>depth 6</span></div>
+<pre><code>L0: hidden_states[1:][L] == hook(layers[L])   True    rms 1.4127
+L1: ...                                       True    rms 1.9679
+L2: ...                                       True    rms 2.5164
+L3: ...                                       True    rms 2.8247
+L4: ...                                       True    rms 3.1598
+L5: ...                                       <span class="c-kw">False</span>   rms(acts) 1.0000  vs  rms(hook) 3.4937
+    acts[5] == norm(hook[5])                  True
+
+margin from logits             = +0.49286
+dot(POST-norm h5, W_yes-W_no)  = +0.49286     <span class="c-com"># exact</span>
+dot(PRE-norm  h5, W_yes-W_no)  = +1.72190     <span class="c-com"># off by exactly the rms, 3.4937</span></code></pre>
+  </div>
+
+  <p>
+    RMSNorm divides by the vector's own scale, so the margin as a function of the <i>pre</i>-norm
+    layer-5 output is <b>degree-zero homogeneous</b>: multiply that vector by any positive number and
+    the margin does not move at all. Which has a sharp consequence — the gradient of the margin is
+    exactly orthogonal to the activation itself:
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>verification</span><span>scale invariance and the orthogonal gradient</span></div>
+<pre><code>margin(  0.25 * h5_pre) = +0.492862
+margin(  1.00 * h5_pre) = +0.492862
+margin(  4.00 * h5_pre) = +0.492862
+margin(100.00 * h5_pre) = +0.492862
+cos(grad, h)            = -1.9e-09      <span class="c-com"># gradient is orthogonal to h, identically</span></code></pre>
+  </div>
+
+  <p>
+    Neel Nanda states the same fact for LayerNorm in the attribution-patching context, and it is the
+    single most load-bearing caveat on this page:
+  </p>
+
+  <blockquote>
+    <p>“the derivative of LayerNorm normalisation is the complete opposite — the component in the
+    direction of v is zero (because it scales v and its norm equally and cancels out) and the
+    component in any direction orthogonal to v is unchanged.”</p>
+    <cite>Neel Nanda, <a href="https://www.neelnanda.io/mechanistic-interpretability/attribution-patching">Attribution Patching: Activation Patching At Industrial Scale</a></cite>
+  </blockquote>
+
+  <p>
+    Read the good news first. Because the margin ignores the length of the residual stream and cares
+    only about its direction, the <b>decision</b> — the sign, the yes or no, every flip this project
+    measures — is untouched by how big the vector is. The bad news is that a linear lens has no way
+    to be blind in the same way. It reports <span class="num">J&nbsp;&middot;&nbsp;h</span>, which
+    grows when <span class="num">h</span> grows, and the statistic this experiment publishes is a
+    <i>spread</i> of lens margins. Some of that spread is length, and length provably does not
+    matter to the model. <a href="#s9">Caveat 3</a> puts a number on it.
+  </p>
+
+  <div class="panel" id="p-geo">
+    <div class="panel-head">
+      <span class="panel-title">Lab · the margin is an angle, not a length</span>
+      <span class="panel-sub">drag the activation; watch what the model does and does not notice</span>
+    </div>
+    <div class="panel-body">
+      <p class="small" style="margin-top:0">
+        A 2-D stand-in for the 384-dimensional stream. The amber line is
+        <span class="num k-amber">W<sub>yes</sub>&nbsp;&minus;&nbsp;W<sub>no</sub></span>; the dashed
+        line is the decision boundary orthogonal to it. Drag the blue point, or use the sliders.
+        Watch the two readouts disagree: the <b>true margin</b> normalises first and so depends only
+        on the angle, while a <b>linear lens</b> reads the raw projection and moves when you change
+        nothing but the length.
+      </p>
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="geo-ang">Angle to the yes direction <output id="geo-ang-v">40&deg;</output></label>
+          <input type="range" id="geo-ang" min="0" max="180" step="1" value="40">
+        </div>
+        <div class="ctrl">
+          <label for="geo-len">Length of the activation <output id="geo-len-v">1.00</output></label>
+          <input type="range" id="geo-len" min="20" max="300" step="1" value="100">
+        </div>
+      </div>
+      <div class="canvas-wrap"><canvas id="geo-canvas" width="820" height="330"></canvas></div>
+      <div class="stats" style="margin-top:.85rem">
+        <div class="stat"><span class="lbl">True margin</span><span class="val a" id="geo-true">—</span><span class="sub">after RMSNorm</span></div>
+        <div class="stat"><span class="lbl">Linear lens</span><span class="val b" id="geo-lens">—</span><span class="sub">raw projection</span></div>
+        <div class="stat"><span class="lbl">Model answers</span><span class="val" id="geo-ans">—</span><span class="sub">sign of the true margin</span></div>
+        <div class="stat"><span class="lbl">Length-only error</span><span class="val w" id="geo-err">—</span><span class="sub">lens &minus; true</span></div>
+      </div>
+    </div>
+    <div class="panel-foot">
+      Slide the length alone: the answer never changes and the true margin never moves, but the lens
+      reading scales with it. Every unit of that movement is spread the lens reports and the model
+      cannot act on.
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================= 03 -->
+<section id="s3">
+  <span class="snum">03 — The lineage</span>
+  <h2>Three lenses, and the bet each one makes</h2>
+
+  <p>
+    The idea of reading an intermediate state through the output head is nostalgebraist's
+    <b>logit lens</b>, from 2020. Belrose and colleagues later wrote its assumption down in one line,
+    which is the most useful sentence available for placing your method:
+  </p>
+
+  <blockquote>
+    <p>“The logit lens consists of setting the residuals to zero:
+    LogitLens(<b>h</b><sub>&ell;</sub>) = LayerNorm[<b>h</b><sub>&ell;</sub>]W<sub>U</sub>.”</p>
+    <cite>Belrose et al., <a href="https://arxiv.org/abs/2303.08112">Eliciting Latent Predictions from Transformers with the Tuned Lens</a> (2023)</cite>
+  </blockquote>
+
+  <p>
+    Setting the residuals to zero means: <i>pretend the remaining layers do nothing.</i> Apply the
+    final norm and the unembedding early and see what falls out. It costs nothing to compute and it
+    estimates nothing. It also breaks, and the breakage is documented rather than hypothetical:
+  </p>
+
+  <blockquote>
+    <p>“While this simple form of the logit lens works reasonably well for GPT-2, nostalgebraist
+    (2021) found that it fails to extract useful information from the GPT-Neo family of models.”</p>
+    <p>“we find that for BLOOM and OPT 125M, the top 1 prediction of the logit lens is often the
+    input token, rather than any plausible continuation token, in more than half the layers”</p>
+    <cite>Belrose et al. (2023), §&nbsp;The Logit Lens</cite>
+  </blockquote>
+
+  <p>
+    The diagnosis is <b>representational drift</b>: layer &ell;'s activations simply are not written
+    in the coordinate system the final unembedding expects, so reading them with that unembedding
+    produces nonsense. The <b>tuned lens</b> fixes it by learning the change of basis —
+    <span class="num">TunedLens<sub>&ell;</sub>(h<sub>&ell;</sub>) = LogitLens(A<sub>&ell;</sub>h<sub>&ell;</sub> + b<sub>&ell;</sub>)</span>,
+    with the pair <span class="num">(A<sub>&ell;</sub>, b<sub>&ell;</sub>)</span> trained by gradient
+    descent to minimise KL against <i>the model's own final distribution</i>, not against the ground
+    truth token.
+  </p>
+
+  <p>
+    Your lens takes the third road. It never assumes the bases match, and it never fits anything to
+    a target. It <b>differentiates through the remaining layers</b>, which performs the change of
+    basis by chain rule:
+  </p>
+
+  <div class="three">
+    <div class="mini">
+      <h5>Logit lens (2020)</h5>
+      <p>Apply the final norm and unembedding to <span class="num">h<sub>&ell;</sub></span>.</p>
+      <p><b>Bet:</b> layers &ell;+1…L are the identity.</p>
+      <p class="small">Free. Nothing estimated. Fails when the bases drift.</p>
+    </div>
+    <div class="mini">
+      <h5>Tuned lens (2023)</h5>
+      <p>Learn an affine translator, then unembed.</p>
+      <p><b>Bet:</b> the effect of the remaining layers is affine, and SGD can find it.</p>
+      <p class="small">Trained against the model's final distribution. Scored by perplexity and bias.</p>
+    </div>
+    <div class="mini">
+      <h5>Jacobian lens (here)</h5>
+      <p>Average <span class="num">&part;margin/&part;h<sub>&ell;</sub></span> over examples; read the projection.</p>
+      <p><b>Bet:</b> the effect of the remaining layers is affine, and the average derivative finds it.</p>
+      <p class="small">One scalar, not a distribution. Nothing fitted, nothing validated.</p>
+    </div>
+  </div>
+
+  <p>
+    On the axis the tuned-lens paper cares about — <i>does the probe account for the remaining
+    layers?</i> — your lens is on the tuned lens's side. On the axis the name suggests — <i>are the
+    weights fitted or derived?</i> — it is on the logit lens's side. The single cleanest way to say
+    it: <b>the Jacobian lens is the tuned lens's translator computed analytically instead of learned,
+    collapsed onto a single output direction.</b>
+  </p>
+
+  <p>
+    It also has a sibling on a different branch of the family, and that sibling is where
+    <a href="#s8">section 08</a> ends up. Difference two phrasings' lens readings and the
+    intercept cancels:
+  </p>
+
+  <div class="eq">
+    lens<span class="gy">&ell;</span>(A) &minus; lens<span class="gy">&ell;</span>(B)
+    = <span class="bl">J<span class="gy">&ell;</span></span> &middot;
+    <span class="an">(h<span class="gy">&ell;</span><sup>A</sup> &minus; h<span class="gy">&ell;</span><sup>B</sup>)</span>
+  </div>
+
+  <p>
+    which is, character for character, the <b>attribution patching</b> estimator —
+    <span class="num">(clean_act &minus; corrupted_act) &middot; grad</span> — the standard
+    first-order stand-in for a real activation patch. Not an analogy. The same algebraic object,
+    with the per-example gradient swapped for a global average. That swap is not free, and
+    <a href="#s9">caveat 4</a> is where the bill arrives.
+  </p>
+
+  <div class="tbl-wrap">
+  <table>
+    <caption style="caption-side:top;text-align:left;font-family:var(--sans);font-size:11px;color:var(--ink-3);padding:.4rem .7rem">
+      Where each method gets its weights, and what certifies it
+    </caption>
+    <thead><tr><th scope="col">Method</th><th scope="col">Weights come from</th><th scope="col">Accounts for later layers</th><th scope="col">Validated by</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Logit lens</th><td>the model's own W<sub>U</sub></td><td class="lo">no</td><td>nothing</td></tr>
+      <tr><th scope="row">Tuned lens</th><td>SGD on KL to the final distribution</td><td class="hi">yes</td><td>perplexity, bias, causal basis extraction (&rho;&nbsp;=&nbsp;0.89)</td></tr>
+      <tr><th scope="row">Jacobian lens</th><td>averaged autograd derivative</td><td class="hi">yes</td><td class="lo">nothing yet — see caveat 2</td></tr>
+      <tr><th scope="row">Attribution patching</th><td>per-example autograd derivative</td><td class="hi">yes</td><td>the activation patch it approximates (R&sup2;&nbsp;=&nbsp;0.27 in one study)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note caution">
+    <span class="tag">Do not over-claim the pedigree</span>
+    <p>
+      The tuned lens earns its “more predictive, reliable and unbiased” claim with measured
+      perplexity, measured bias, and causal experiments. The Jacobian lens as implemented reports no
+      analogue of any of those. Inheriting the lineage does not inherit the evidence — and the
+      cheapest way to earn some is <a href="#s9">caveat 2</a>, which is four lines of code.
+    </p>
+  </div>
+</section>
+
+<!-- ================================================================= 04 -->
+<section id="s4">
+  <span class="snum">04 — Calculus = regression</span>
+  <h2>The average gradient is a fitted probe in disguise</h2>
+
+  <p>
+    It is tempting to say the Jacobian lens gets its weights “from calculus rather than from
+    fitting”. That is a nice line, and there is a theorem that makes it much more interesting than a
+    nice line — by mostly dissolving the distinction.
+  </p>
+
+  <p>
+    Write <span class="num">g<sub>&ell;</sub>(h)</span> for the scalar map from a layer-&ell;
+    activation to the final margin. The best linear predictor of the margin from the activation —
+    ordinary least squares — has slope
+    <span class="num">&beta; = &Sigma;<sup>&minus;1</sup>Cov(h,&nbsp;g)</span> and prediction
+    <span class="num">m̄ + &beta;&middot;(h &minus; h̄)</span>. That is <i>structurally the same
+    formula</i> the lens uses. And by the multivariate Stein lemma, if
+    <span class="num">h ~ N(&mu;, &Sigma;)</span> then
+    <span class="num">Cov(h,&nbsp;g) = &Sigma;&middot;E[&nabla;g]</span>, so
+  </p>
+
+  <div class="eq">
+    &beta; = <span class="gy">&Sigma;<sup>&minus;1</sup></span>
+    <span class="gy">&Sigma;</span> <span class="bl">E[&nabla;g]</span>
+    = <span class="bl">E[&nabla;g]</span> = <span class="an">J<span class="gy">&ell;</span></span>
+  </div>
+
+  <p>
+    <b>Under Gaussian activations the Jacobian lens <i>is</i> the least-squares linear probe</b> —
+    same slope, same intercept, no approximation. Calculus and regression are the same estimator.
+    They come apart only to the extent the activations are not Gaussian, and residual streams are
+    famously not: the tuned-lens paper's own diagnosis of logit-lens failure is that “transformer
+    hidden states often contain a small number of very high variance dimensions”.
+  </p>
+
+  <p>
+    So the honest version of the slogan is better than the slogan. The lens is a linear probe whose
+    coefficients are <b>estimated from the model's derivatives instead of optimised against a
+    target</b>, and the gap between that and a fitted probe is exactly the non-Gaussianity of the
+    activations. The lab below lets you open that gap and watch it.
+  </p>
+
+  <div class="panel" id="p-stein">
+    <div class="panel-head">
+      <span class="panel-title">Lab · Stein's identity, and where it stops holding</span>
+      <span class="panel-sub">average gradient against fitted OLS, on the same samples</span>
+    </div>
+    <div class="panel-body">
+      <p class="small" style="margin-top:0">
+        A synthetic <span class="num">g(h) = &phi;(w&middot;h)</span> in
+        <span class="num">d</span> dimensions with a smooth nonlinearity, sampled
+        <span class="num">n</span> times. We compute the average gradient
+        <span class="num k-amber">J = E[&nabla;g]</span> and the fitted OLS coefficient
+        <span class="num" style="color:var(--blue)">&beta;</span> from the very same draws, then
+        compare them. <b>Heavy tails</b> pushes the activation distribution away from Gaussian;
+        <b>curvature</b> makes <span class="num">g</span> less affine.
+      </p>
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="st-n">Samples <i>n</i> <output id="st-n-v">256</output></label>
+          <input type="range" id="st-n" min="32" max="2048" step="32" value="256">
+        </div>
+        <div class="ctrl">
+          <label for="st-d">Dimensions <i>d</i> <output id="st-d-v">32</output></label>
+          <input type="range" id="st-d" min="4" max="128" step="4" value="32">
+        </div>
+        <div class="ctrl">
+          <label for="st-tail">Rogue dimensions <output id="st-tail-v">0.00</output></label>
+          <input type="range" id="st-tail" min="0" max="100" step="1" value="0">
+        </div>
+        <div class="ctrl">
+          <label for="st-curv">Curvature <output id="st-curv-v">0.60</output></label>
+          <input type="range" id="st-curv" min="0" max="200" step="1" value="60">
+        </div>
+      </div>
+      <div class="canvas-wrap"><canvas id="st-canvas" width="820" height="300"></canvas></div>
+      <div class="stats" style="margin-top:.85rem">
+        <div class="stat"><span class="lbl">cos(J, &beta;)</span><span class="val b" id="st-cos">—</span><span class="sub">1.00 = identical direction</span></div>
+        <div class="stat"><span class="lbl">R&sup2; of the lens</span><span class="val" id="st-r2j">—</span><span class="sub">average-gradient weights</span></div>
+        <div class="stat"><span class="lbl">R&sup2; of OLS</span><span class="val" id="st-r2b">—</span><span class="sub">fitted weights, same data</span></div>
+        <div class="stat"><span class="lbl">‖J‖ / ‖&beta;‖</span><span class="val" id="st-scale">—</span><span class="sub">scale agreement</span></div>
+      </div>
+      <div class="btnrow" style="margin-top:.8rem">
+        <button class="btn" id="st-reseed">New sample</button>
+        <button class="btn" id="st-gauss">Back to Gaussian</button>
+      </div>
+    </div>
+    <div class="panel-foot">
+      At zero heavy tails the two agree to sampling noise — that is Stein's lemma. Push the tails up
+      and the directions separate while OLS keeps its fit, which is the precise sense in which
+      “calculus instead of fitting” is a real but bounded distinction. Note also what
+      <i>curvature</i> does to <b>both</b>: no linear readout survives a strongly non-affine
+      <span class="num">g</span>, however its weights were obtained.
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="tag">Why this matters for the defense</span>
+    <p>
+      A committee member who asks “why should an average gradient be a good readout?” is asking a
+      question with a real answer: because it is the population OLS coefficient whenever the
+      activations are jointly Gaussian, and an estimator of it otherwise. That is a stronger
+      position than “it's the derivative, so it must be informative”, and it names its own
+      assumption, which is the part that makes it defensible.
+    </p>
+  </div>
+</section>
+
+<!-- ================================================================= 05 -->
+<section id="s5">
+  <span class="snum">05 — Your recipe</span>
+  <h2>Fifty lines, and what each of them commits you to</h2>
+
+  <p>
+    The whole method is two functions. The first fits the lens; the second reads it. Nothing else in
+    <code>jlens.py</code> touches the model.
+  </p>
+
+  <h3>Fitting: three expectations, one backward pass each</h3>
+
+  <div class="code">
+    <div class="code-head"><span>scripts/experiments/jlens.py</span><span>fit_jacobian, lines 39–84 (abridged)</span></div>
+<pre><code><span class="c-kw">def</span> <span class="c-fn">fit_jacobian</span>(model, dataset, device, n_fit=<span class="c-num">256</span>):
+    <span class="c-com"># hook every decoder layer and keep its output tensor, with grad retained</span>
+    <span class="c-kw">for</span> L <span class="c-kw">in</span> range(depth):
+        <span class="c-kw">def</span> <span class="c-fn">hook</span>(mod, inp, out):
+            hs = out[<span class="c-num">0</span>] <span class="c-kw">if</span> isinstance(out, tuple) <span class="c-kw">else</span> out
+            hs.<span class="c-fn">retain_grad</span>()                      <span class="c-com"># keep d(margin)/d(hs)</span>
+            captured[L] = hs
+
+    loader = <span class="c-fn">DataLoader</span>(dataset, batch_size=<span class="c-num">1</span>, collate_fn=collate)
+    <span class="c-kw">for</span> b <span class="c-kw">in</span> loader:
+        <span class="c-kw">if</span> n &gt;= n_fit: <span class="c-kw">break</span>                     <span class="c-com"># &lt;- 256 rows, in dataset order</span>
+        logits, _ = <span class="c-fn">model</span>(vis, tokens, ans_pos)
+        margin = logits[<span class="c-num">0</span>, <span class="c-num">1</span>] - logits[<span class="c-num">0</span>, <span class="c-num">0</span>]      <span class="c-com"># yes minus no</span>
+        margin.<span class="c-fn">backward</span>()
+        ai = int(b[<span class="c-str">"ans_pos"</span>][<span class="c-num">0</span>]) + model.n_img
+        <span class="c-kw">for</span> L <span class="c-kw">in</span> range(depth):
+            Jsum[L] += captured[L].grad[<span class="c-num">0</span>, ai].<span class="c-fn">detach</span>()   <span class="c-com"># the Jacobian</span>
+            Hsum[L] += captured[L][<span class="c-num">0</span>, ai].<span class="c-fn">detach</span>()        <span class="c-com"># the mean activation</span>
+        msum += float(margin.<span class="c-fn">detach</span>()); n += <span class="c-num">1</span>
+    <span class="c-kw">return</span> [Jsum[L]/n ...], [Hsum[L]/n ...], msum/n, depth</code></pre>
+  </div>
+
+  <p>
+    Three quantities per layer: <span class="num k-amber">J<sub>&ell;</sub></span> the average
+    gradient, <span class="num">H̄<sub>&ell;</sub></span> the average activation, and
+    <span class="num">m̄</span> the average margin. Note that <code>margin.backward()</code> is a
+    scalar backward through the <i>whole</i> network — this is what makes the lens account for the
+    remaining layers rather than assuming them away.
+  </p>
+
+  <h3>Reading: one projection per layer per example</h3>
+
+  <div class="code">
+    <div class="code-head"><span>scripts/experiments/jlens.py</span><span>read_lens, line 114</span></div>
+<pre><code>lm = mbar + ((h - Hbar[L]) * J[L]).sum(-<span class="c-num">1</span>)</code></pre>
+  </div>
+
+  <div class="eq">
+    m̂<span class="gy">&ell;</span>(x) = <span class="gy">m̄</span> +
+    <span class="an">J<span class="gy">&ell;</span></span> &middot;
+    <span class="bl">(h<span class="gy">&ell;</span>(x) &minus; H̄<span class="gy">&ell;</span>)</span>
+  </div>
+
+  <div class="note finding">
+    <span class="tag">Two of the three fitted quantities never affect a published number</span>
+    <p>
+      Every statistic this script reports is a <b>within-cluster standard deviation</b> of
+      <span class="num">m̂</span>, or a correlation built from one. Both
+      <span class="num">m̄</span> and <span class="num">H̄<sub>&ell;</sub></span> are constants
+      across examples, so they cancel exactly:
+      <span class="num">std<sub>c</sub>(m̂) = std<sub>c</sub>(J<sub>&ell;</sub>&middot;h<sub>&ell;</sub>)</span>.
+      The ratio and the point-biserial are additionally invariant to the <i>scale</i> of
+      <span class="num">J<sub>&ell;</sub></span>, so the entire published result depends on nothing
+      but the <b>direction</b> of the average gradient.
+    </p>
+    <p>
+      This is good news and worth saying out loud at the defense. It means the results carry no
+      dependence on the expansion point, no dependence on whether
+      <span class="num">H̄</span> is even a realisable activation, and no dependence on the
+      Jacobian's magnitude. It also means the “first-order Taylor expansion” framing is doing less
+      work than it appears to — see <a href="#s9">caveat 5</a>.
+    </p>
+  </div>
+
+  <h3>The fit set is smaller than it looks</h3>
+
+  <p>
+    <code>n_fit=256</code> reads as a comfortable sample. It is not 256 questions. The evaluation set
+    is built cluster by cluster — one original phrasing plus 48 paraphrases from
+    <code>src/babygemma/templates.py</code>, so <b>49 consecutive rows per question</b> — and the fit
+    loader is created without <code>shuffle</code>:
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>scripts/experiments/jlens.py</span><span>line 61</span></div>
+<pre><code>loader = <span class="c-fn">DataLoader</span>(dataset, batch_size=<span class="c-num">1</span>, collate_fn=collate)   <span class="c-com"># no shuffle=True</span></code></pre>
+  </div>
+
+  <p>
+    So the first 256 rows are clusters 0 through 5, and the “average over 256 examples” is an average
+    over <b>six distinct images and questions</b>, each contributing 49 near-duplicate phrasings.
+    Out of 231 clusters on the probe, and 1,500 on the scaled model.
+  </p>
+
+  <div class="panel" id="p-fit">
+    <div class="panel-head">
+      <span class="panel-title">Lab · what <code>n_fit</code> actually buys</span>
+      <span class="panel-sub">rows against distinct questions, at 49 rows per cluster</span>
+    </div>
+    <div class="panel-body">
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="fit-n">n_fit (rows) <output id="fit-n-v">256</output></label>
+          <input type="range" id="fit-n" min="49" max="2450" step="49" value="245">
+        </div>
+        <div class="ctrl">
+          <label class="switch" for="fit-shuf"><input type="checkbox" id="fit-shuf"> shuffle the fit loader</label>
+        </div>
+      </div>
+      <div class="canvas-wrap"><canvas id="fit-canvas" width="820" height="230"></canvas></div>
+      <div class="stats" style="margin-top:.85rem">
+        <div class="stat"><span class="lbl">Rows read</span><span class="val" id="fit-rows">—</span></div>
+        <div class="stat"><span class="lbl">Distinct questions</span><span class="val b" id="fit-q">—</span><span class="sub">the real sample size</span></div>
+        <div class="stat"><span class="lbl">Of 231 (probe)</span><span class="val" id="fit-pct">—</span></div>
+        <div class="stat"><span class="lbl">Shipped setting</span><span class="val a" id="fit-ship">—</span><span class="sub">n_fit = 256, unshuffled</span></div>
+      </div>
+    </div>
+    <div class="panel-foot">
+      One word — <code>shuffle=True</code> — turns six questions into 256. The fit is also drawn from
+      the same split the lens is then read on, so it is in-sample; both are
+      <a href="#s9">caveat 6</a>.
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================= 06 -->
+<section id="s6">
+  <span class="snum">06 — A flip, close up</span>
+  <h2>What the lens sees when one question disagrees with itself</h2>
+
+  <p>
+    A <b>cluster</b> is one image and one finding, asked 49 ways. The 48 paraphrases come from
+    <code>src/babygemma/templates.py</code>, twelve in each of four registers, and every one of them
+    is meaning-preserving — the file is explicit that answer-inverting rewrites like
+    <i>“is {f} absent?”</i> live in a separate bank and never enter a cluster.
+  </p>
+
+  <div class="tbl-wrap">
+  <table>
+    <caption style="caption-side:top;text-align:left;font-family:var(--sans);font-size:11px;color:var(--ink-3);padding:.4rem .7rem">
+      The four registers, from src/babygemma/templates.py — 12 phrasings each
+    </caption>
+    <thead><tr><th scope="col">Register</th><th scope="col">What it varies</th><th scope="col">Example</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">lexical_substitution</th><td>content words, structure fixed</td><td><i>is there radiographic evidence of pleural effusion?</i></td></tr>
+      <tr><th scope="row">syntactic_restructuring</th><td>grammar, words fixed</td><td><i>can pleural effusion be identified?</i></td></tr>
+      <tr><th scope="row">scope_quantification</th><td>the quantifier</td><td><i>is there any degree of pleural effusion present?</i></td></tr>
+      <tr><th scope="row">specificity_modulation</th><td>clinical register, up and down</td><td><i>anything like pleural effusion on here?</i></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    The flip rule is in <code>src/babygemma/metrics.py</code> and it is as blunt as it sounds — a
+    cluster flips if its 49 predictions are not unanimous:
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>src/babygemma/metrics.py</span><span>flip_labels, lines 51–55</span></div>
+<pre><code><span class="c-kw">return</span> {c: len(set(ps)) &gt; <span class="c-num">1</span> <span class="c-kw">for</span> c, ps <span class="c-kw">in</span> by.items()}</code></pre>
+  </div>
+
+  <p>
+    Now put the two together. Each phrasing produces a margin. The cluster's answer is unanimous
+    exactly when all 49 margins land on the same side of zero. So a flip is a race between two
+    quantities: <b>how far this question's margin sits from the boundary</b>, and <b>how much the
+    phrasing moves it</b>. The lens measures the second one directly — that is what
+    <code>lens_divergence</code> is, the within-cluster standard deviation of
+    <span class="num">m̂</span>.
+  </p>
+
+  <div class="panel wide" id="p-cluster">
+    <div class="panel-head">
+      <span class="panel-title">Lab · one cluster, 49 phrasings, six layers</span>
+      <span class="panel-sub">spread against distance to the boundary</span>
+    </div>
+    <div class="panel-body">
+      <p class="small" style="margin-top:0">
+        Each faint line is one phrasing of <i>pleural effusion</i> read through the lens at every
+        layer; the heavy line is the cluster mean. The spread at each layer is set by the
+        <b>published</b> per-layer divergence for the run and cluster type you pick, so the geometry
+        here is the measured geometry. What you control is where the question sits relative to the
+        decision boundary.
+      </p>
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="cl-run">Run</label>
+          <select id="cl-run">
+            <option value="probe" selected>1,841-question probe — results_gemma/jlens_gemma</option>
+            <option value="scaled">scaled grounded model — results_transfer/jlens</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <label for="cl-kind">Cluster type</label>
+          <select id="cl-kind">
+            <option value="flip" selected>a flipping cluster (published divergence)</option>
+            <option value="stable">a stable cluster (published divergence)</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <label for="cl-bias">Distance from the boundary <output id="cl-bias-v">+0.60</output></label>
+          <input type="range" id="cl-bias" min="-400" max="400" step="5" value="60">
+        </div>
+        <div class="ctrl">
+          <label for="cl-seed">Resample <output id="cl-seed-v">1</output></label>
+          <input type="range" id="cl-seed" min="1" max="60" step="1" value="1">
+        </div>
+      </div>
+      <div class="canvas-wrap"><canvas id="cl-canvas" width="1060" height="360"></canvas></div>
+      <div class="stats" style="margin-top:.85rem">
+        <div class="stat"><span class="lbl">Spread at L0</span><span class="val b" id="cl-sd">—</span><span class="sub">published divergence</span></div>
+        <div class="stat"><span class="lbl">Mean margin</span><span class="val" id="cl-mean">—</span><span class="sub">distance to boundary</span></div>
+        <div class="stat"><span class="lbl">Ratio</span><span class="val" id="cl-ratio">—</span><span class="sub">spread &divide; |mean|</span></div>
+        <div class="stat"><span class="lbl">Predictions</span><span class="val" id="cl-split">—</span><span class="sub">yes / no across 49</span></div>
+        <div class="stat"><span class="lbl">Cluster</span><span class="val" id="cl-flip">—</span><span class="sub">len(set(preds)) &gt; 1</span></div>
+      </div>
+      <h4 style="margin-top:1.3rem">The 49 phrasings at the final layer</h4>
+      <div class="phr" id="cl-list"></div>
+    </div>
+    <div class="panel-foot">
+      Push the mean margin toward zero and the cluster flips even at the stable spread; push it far
+      out and even the flipping spread stays unanimous. This is why flip rate is a property of the
+      <i>pair</i> — a model can be made to look robust by being confidently wrong, which is exactly
+      the failure the AUC analysis elsewhere in this project catches.
+      Then switch the run to the scaled model and toggle the cluster type: on the probe the two
+      types are unmistakable (1.94 against 0.22), while on the scaled model they are 0.031 against
+      0.014 and both types flip at the same distance from the boundary. That is what
+      8.9&times; versus 2.2&times; feels like.
+    </div>
+  </div>
+
+  <div class="note caution">
+    <span class="tag">What is real here and what is drawn</span>
+    <p>
+      The per-layer spreads, the flip/stable contrast, and the ratios are read from the committed
+      result JSONs. The individual 49 traces are <b>sampled</b> from those published statistics —
+      <code>jlens.py</code> computes per-example lens margins in <code>read_lens</code> but only ever
+      writes the aggregate to disk, so per-phrasing traces do not exist in the repository. Nothing
+      on this page pretends otherwise, and <a href="#s9">caveat 11</a> is the two-line change that
+      would make them real.
+    </p>
+  </div>
+</section>
+
+<!-- ================================================================= 07 -->
+<section id="s7">
+  <span class="snum">07 — The result</span>
+  <h2>Two models, six layers, and a curve that does not bend</h2>
+
+  <p>
+    Here is everything <code>jlens.py</code> wrote to disk, for both runs, with no interpretation
+    layered on top yet.
+  </p>
+
+  <div class="panel wide" id="p-div">
+    <div class="panel-head">
+      <span class="panel-title">The measured lens divergence</span>
+      <span class="panel-sub">results_gemma/jlens_gemma/jlens.json · results_transfer/jlens/jlens.json</span>
+    </div>
+    <div class="panel-body">
+      <div class="btnrow" style="margin-bottom:.9rem">
+        <span class="chips">
+          <button class="chip" data-dv="abs" aria-pressed="true">Absolute divergence</button>
+          <button class="chip" data-dv="ratio" aria-pressed="false">Flip &divide; stable ratio</button>
+          <button class="chip" data-dv="pb" aria-pressed="false">Point-biserial with flip</button>
+        </span>
+        <label class="switch" style="margin-left:auto"><input type="checkbox" id="dv-both" checked> show both runs</label>
+      </div>
+      <div class="canvas-wrap"><canvas id="dv-canvas" width="1060" height="340"></canvas></div>
+      <div class="legend" id="dv-legend"></div>
+    </div>
+    <div class="panel-foot" id="dv-foot">—</div>
+  </div>
+
+  <div class="tbl-wrap">
+  <table>
+    <caption style="caption-side:top;text-align:left;font-family:var(--sans);font-size:11px;color:var(--ink-3);padding:.4rem .7rem">
+      The two runs side by side. Significance computed from the reported correlation and cluster count.
+    </caption>
+    <thead><tr><th scope="col">Quantity</th><th scope="col" class="n">Probe</th><th scope="col" class="n">Scaled</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Result file</th><td class="n"><code>results_gemma/jlens_gemma</code></td><td class="n"><code>results_transfer/jlens</code></td></tr>
+      <tr><th scope="row">Grounding token</th><td class="n">no</td><td class="n">yes</td></tr>
+      <tr><th scope="row">Evaluation clusters</th><td class="n">231</td><td class="n">1,500</td></tr>
+      <tr><th scope="row">Evaluation rows</th><td class="n">11,319</td><td class="n">73,500</td></tr>
+      <tr><th scope="row">Accuracy</th><td class="n">0.887</td><td class="n">0.759</td></tr>
+      <tr><th scope="row">Grounding gap</th><td class="n">0.091</td><td class="n"><span class="hi">0.248</span></td></tr>
+      <tr><th scope="row">Flip rate</th><td class="n">0.0996 (23 clusters)</td><td class="n">0.0487 (73 clusters)</td></tr>
+      <tr><th scope="row">Flip &divide; stable divergence, L0</th><td class="n"><span class="hi">8.87&times;</span></td><td class="n">2.23&times;</td></tr>
+      <tr><th scope="row">&hellip; at L5</th><td class="n">8.57&times;</td><td class="n">1.95&times;</td></tr>
+      <tr><th scope="row">Point-biserial, L0</th><td class="n"><span class="hi">0.809</span></td><td class="n">0.265</td></tr>
+      <tr><th scope="row">&hellip; implied t, p</th><td class="n">t = 20.8, p = 9e&minus;55</td><td class="n">t = 10.6, p = 2e&minus;25</td></tr>
+      <tr><th scope="row">Weakest layer's point-biserial</th><td class="n">0.769 (L5)</td><td class="n">0.230 (L1)</td></tr>
+      <tr><th scope="row">&hellip; p, Bonferroni &times; 6</th><td class="n">1e&minus;45</td><td class="n">1e&minus;18</td></tr>
+      <tr><th scope="row">Reported commit layer</th><td class="n">0</td><td class="n">0</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    Three readings, in descending order of how comfortable they are.
+  </p>
+
+  <h3>Read one: the separation is real, and it is not marginal</h3>
+
+  <p>
+    On the probe, flipping clusters' lens margins spread <b>8.87&times;</b> wider than stable ones at
+    layer 0, and the per-cluster spread correlates with flip status at <b>0.809</b> over 231
+    clusters. Even the weakest of the six layers survives a Bonferroni correction for all six by
+    forty-five orders of magnitude. Nothing about this is a threshold effect or a marginal
+    <i>p</i>-value. The scaled model reproduces the sign and the direction at
+    <b>2.23&times;</b> and <b>0.265</b> — much weaker, still far from chance.
+  </p>
+
+  <h3>Read two: the curve is flat, so the lens localises nothing</h3>
+
+  <p>
+    <code>lens_commit_layer</code> is defined as the shallowest layer where flipping clusters diverge
+    more than twice as much as stable ones:
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>scripts/experiments/jlens.py</span><span>line 171</span></div>
+<pre><code>commit = next((L <span class="c-kw">for</span> L <span class="c-kw">in</span> range(depth) <span class="c-kw">if</span> div_flip[L] &gt; <span class="c-num">2</span> * div_noflip[L] + <span class="c-num">1e-6</span>), <span class="c-kw">None</span>)</code></pre>
+  </div>
+
+  <p>
+    It returns 0 for both runs. But the criterion is already satisfied at the first layer measured
+    and stays satisfied everywhere, so “layer 0” is a floor, not a finding — the lens cannot report
+    anything shallower because it has nothing shallower hooked. The honest statement is <b>the
+    separation is fully present at the output of layer 0 and is merely carried forward</b>, which is
+    a real and interesting result, but it is not a localisation.
+  </p>
+
+  <div class="note caution">
+    <span class="tag">And on the scaled model the threshold is fragile</span>
+    <p>
+      The probe's ratios run 8.57–9.77, so the <code>&gt; 2&times;</code> test passes with enormous
+      margin at every layer. The scaled model's run <b>2.23, 2.02, 2.02, 1.99, 1.97, 1.95</b> — layer
+      0 clears the threshold and layers 1–5 sit just under it. Raise the constant from 2 to 2.1 and
+      <code>lens_commit_layer</code> becomes <code>None</code>. The reported value is robust on the
+      probe and one decimal place from flipping on the scaled model; say so before someone asks.
+    </p>
+  </div>
+
+  <h3>Read three: the correlation gets weaker with depth, which is the wrong direction for an artifact</h3>
+
+  <p>
+    The obvious objection to any lens result is circularity: the final-layer lens margin approximates
+    the real margin, and a cluster flips exactly when the real margin changes sign across phrasings,
+    so of course late-layer spread predicts flipping. If that were the whole story the point-biserial
+    would <i>climb</i> toward the readout. It falls, monotonically, on both runs —
+    0.809&nbsp;&rarr;&nbsp;0.769 on the probe and 0.265&nbsp;&rarr;&nbsp;0.231 on the scaled model.
+    The most predictive layer is the one furthest from the head. That is the opposite of what
+    circularity predicts, and it is the strongest single point in the method's favour.
+  </p>
+</section>
+
+<!-- ================================================================= 08 -->
+<section id="s8">
+  <span class="snum">08 — Lens vs patch</span>
+  <h2>The cheap estimate and the real intervention</h2>
+
+  <p>
+    The lens says the phrasings' dispositions separate at layer 0. Experiment C says something
+    stronger and different in kind: take the answer-position activation from a phrasing the model
+    got the majority answer on, write it into the flipped phrasing's forward pass, and the answer
+    comes back. That is causation, not correlation.
+  </p>
+
+  <p>
+    The two are not independent methods, and it matters to say so. Difference the lens across the
+    donor and target and you get precisely the attribution-patching estimate of what the patch will
+    do:
+  </p>
+
+  <div class="eq">
+    <span class="gy">predicted margin change</span> =
+    <span class="an">J<span class="gy">&ell;</span></span> &middot;
+    <span class="bl">(h<span class="gy">&ell;</span><sup>donor</sup> &minus; h<span class="gy">&ell;</span><sup>target</sup>)</span>
+  </div>
+
+  <p>
+    And the patch experiment C runs really is the full intervention that estimates. Its “rank-1
+    difference-direction” patch, with the basis taken along
+    <span class="num">d&nbsp;&minus;&nbsp;t</span>, collapses algebraically:
+  </p>
+
+  <div class="eq">
+    t &minus; (t&middot;b)b + (d&middot;b)b
+    = t + ((d&minus;t)&middot;b)b = t + (d &minus; t) = <span class="an">d</span>
+    <span class="gy">&nbsp;&nbsp;where b = (d&minus;t)/‖d&minus;t‖</span>
+  </div>
+
+  <p>
+    Verified numerically to 3.6e&minus;07. So the answer-position activation is <b>completely
+    replaced</b> at that layer; the rank-1 framing earns its keep only by making the
+    random-direction control a fair comparison. This tightens the correspondence to attribution
+    patching — and it also means the patch sits squarely in the regime the attribution-patching
+    literature warns about:
+  </p>
+
+  <blockquote>
+    <p>“It works best when patching things near the end of the model, and when making 'small'
+    patches, where patch represents a small fraction of the residual stream, and badly for big
+    patches (eg an entire residual stream).”</p>
+    <cite>Neel Nanda, <a href="https://www.neelnanda.io/mechanistic-interpretability/attribution-patching">Attribution Patching</a></cite>
+  </blockquote>
+
+  <div class="panel wide" id="p-patch">
+    <div class="panel-head">
+      <span class="panel-title">The two methods, per layer</span>
+      <span class="panel-sub">jlens divergence ratio against experiment C rank-1 recovery</span>
+    </div>
+    <div class="panel-body">
+      <div class="btnrow" style="margin-bottom:.9rem">
+        <span class="chips">
+          <button class="chip" data-pr="probe" aria-pressed="true">Probe</button>
+          <button class="chip" data-pr="scaled" aria-pressed="false">Scaled</button>
+        </span>
+      </div>
+      <div class="canvas-wrap"><canvas id="pt-canvas" width="1060" height="340"></canvas></div>
+      <div class="legend">
+        <span><i style="background:var(--viz-1)"></i>rank-1 recovery (experiment C)</span>
+        <span><i style="background:var(--viz-2)"></i>random-direction control</span>
+        <span><i style="background:var(--viz-mute)"></i>lens flip &divide; stable ratio, rescaled</span>
+      </div>
+    </div>
+    <div class="panel-foot" id="pt-foot">—</div>
+  </div>
+
+  <h3>Both curves are at their ceiling, and one of them should not be</h3>
+
+  <p>
+    On the probe, recovery is <b>1.00 at layers 0 through 4</b> with a random-direction control at
+    <b>0.00</b>; on the scaled model it is 0.83–1.00 against a control never above 0.10. A saturated
+    curve cannot localise a layer any more than a flat one can, so
+    “the lens and the patch agree on layer 0” is two methods both reporting the shallowest point of
+    a curve that never varies. The defensible joint claim is narrower and still worth making:
+    <b>the flip is already decided at the output of the first decoder layer, and it is carried in a
+    single direction at the answer position</b> — which the random-direction control at 0.00 does
+    establish, and which is what the dissertation's language-side argument actually needs.
+  </p>
+
+  <div class="note caution">
+    <span class="tag">The layer-5 dip is almost certainly an artifact, and it does not touch the finding</span>
+    <p>
+      At the last layer the patch should be <i>deterministic</i>. Replace the answer-position vector
+      with the donor's, and the only thing between it and the logits is the final norm — recovery
+      must be exactly 1.000. It is 0.60 on the probe and 0.72 on the scaled model.
+    </p>
+    <p>
+      The reason is the <code>hidden_states</code> convention from <a href="#s2">section 02</a>.
+      <code>experiment_e.py</code> harvests its donor from <code>acts[L]</code>, and
+      <code>acts[5]</code> is <b>post</b>-final-norm, while the patch hook writes into the
+      <b>pre</b>-norm stream. The final norm then runs a second time. RMSNorm is scale-invariant so
+      the size mismatch is harmless, but the learned <span class="num">(1+w)</span> gain is applied
+      twice, which rotates the vector. Simulated on isotropic activations, that costs a few percent
+      of decisions in general — and far more for donors near the boundary, which flip-cluster donors
+      are <i>by selection</i>:
+    </p>
+    <div class="tbl-wrap" style="margin:.8rem 0 .6rem">
+    <table>
+      <thead><tr><th scope="col">sd of the norm gain</th><th scope="col" class="n">all donors</th><th scope="col" class="n">nearest half</th><th scope="col" class="n">nearest quarter</th><th scope="col" class="n">nearest decile</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">0.10</th><td class="n">3.1%</td><td class="n">6.2%</td><td class="n">12.5%</td><td class="n">27.8%</td></tr>
+        <tr><th scope="row">0.20</th><td class="n">5.9%</td><td class="n">11.9%</td><td class="n">22.5%</td><td class="n">36.3%</td></tr>
+        <tr><th scope="row">0.40</th><td class="n">8.8%</td><td class="n">17.5%</td><td class="n">30.3%</td><td class="n">43.0%</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>
+      The observed shortfall is 28–40%. The near-boundary column covers it.
+    </p>
+    <p>
+      And the repository contains its own control. The retired nanoVLM runs under
+      <code>results/E/</code> use a different decoder — 11,486,210 trainable parameters against
+      13,861,248 — whose captured states carry no post-loop normalisation. Across all 34 committed
+      experiment C runs the split is total:
+    </p>
+    <div class="tbl-wrap" style="margin:.8rem 0 .6rem">
+    <table>
+      <thead><tr><th scope="col">Architecture</th><th scope="col" class="n">runs</th><th scope="col" class="n">layer-5 recovery</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">nanoVLM (<code>results/E/</code>)</th><td class="n">16</td><td class="n"><span class="hi">1.000 in every run</span></td></tr>
+        <tr><th scope="row">baby-MedGemma (<code>results_gemma/E/</code>, <code>results_transfer_patch/</code>)</th><td class="n">18</td><td class="n"><span class="lo">0.273 – 0.817</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>
+      The dip appears in exactly the architecture whose last captured state is post-norm, and in
+      none of the others. That is a stronger argument than the simulation above. It is a one-line
+      fix (<a href="#s9">caveat 2</a>), it affects only layer 5, and layers 0–4 — where the finding
+      lives — are untouched: their <code>acts[L]</code> was verified identical to the hooked layer
+      output.
+    </p>
+  </div>
+
+  <h3>The two runs are not the same checkpoint</h3>
+
+  <p>
+    Worth knowing before it is asked. The lens and the patch were run on sibling checkpoints, not
+    one model:
+  </p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th scope="col">Model</th><th scope="col">Experiment</th><th scope="col" class="n">steps</th><th scope="col" class="n">early stop</th><th scope="col" class="n">accuracy</th><th scope="col" class="n">flip rate</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Probe</th><td>jlens</td><td class="n">1,500</td><td class="n">750</td><td class="n">0.8866</td><td class="n">0.0996</td></tr>
+      <tr><th scope="row">Probe</th><td>experiment C</td><td class="n">2,000</td><td class="n">225</td><td class="n">0.8972</td><td class="n">0.0866</td></tr>
+      <tr><th scope="row">Scaled</th><td>jlens</td><td class="n">8,000</td><td class="n">5,500</td><td class="n">0.7590</td><td class="n">0.0487</td></tr>
+      <tr><th scope="row">Scaled</th><td>experiment C</td><td class="n">12,000</td><td class="n">9,000</td><td class="n">0.7495</td><td class="n">0.0410</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    Same recipe, same regime, same seed, different training budget. For a qualitative agreement
+    about which layers matter this is fine, and both models are firmly in the same behavioural
+    regime. For any quantitative comparison — a regression of predicted margin change against
+    measured margin change, which is the experiment that would settle the whole question — they must
+    be one checkpoint. That is <a href="#s9">caveat 2</a>.
+  </p>
+
+  <div class="note">
+    <span class="tag">How Anthropic frames the same tension</span>
+    <p>
+      Attribution graphs are built from a linearised replacement model, and the Circuit Tracing paper
+      is direct about what that costs and what it requires: “Our approach to studying circuits is
+      indirect — our replacement model may use different mechanisms from the underlying model. Thus,
+      it is important that we validate the mechanisms we find in attribution graphs. We do so using
+      perturbation experiments.” They also report the decay honestly, finding “reasonably good
+      predictive power for effects a few layers downstream of a perturbation, and much worse
+      predictive power many layers downstream.” The posture to copy is not that linear
+      approximations are trustworthy — it is that they are cheap, and that you say out loud which
+      intervention checked them.
+    </p>
+  </div>
+</section>
+
+<!-- ================================================================= 09 -->
+<section id="s9">
+  <span class="snum">09 — Caveats</span>
+  <h2>Eleven things about this implementation, and the fix for each</h2>
+
+  <p class="lede">
+    None of these overturn the finding. Most are one- or two-line changes, and several would make
+    the result stronger to state. They are ordered by how much they affect a number or a figure that
+    has been published.
+  </p>
+
+  <div class="panel" id="p-cav">
+    <div class="panel-head">
+      <span class="panel-title">Ordered by blast radius</span>
+      <span class="panel-sub">click to expand</span>
+    </div>
+    <div class="panel-body" id="cav-body">
+
+      <details open>
+        <summary><span class="cn">1</span><span class="cs">The concept figure is hand-drawn, and its shape contradicts the measurement printed beside it</span><span class="cw a">figure</span></summary>
+        <div class="cbody">
+          <p>
+            <code>figures/jlens_concept.png</code> is not plotted from data. The curves are literals
+            in <code>scripts/legacy/figures.py</code>:
+          </p>
+          <div class="code"><div class="code-head"><span>scripts/legacy/figures.py</span><span>lines 108–110</span></div>
+<pre><code>xs  = list(range(<span class="c-num">7</span>))
+yes = [<span class="c-num">0.0</span>, <span class="c-num">0.05</span>, <span class="c-num">0.15</span>, <span class="c-num">0.4</span>, <span class="c-num">0.75</span>, <span class="c-num">1.0</span>, <span class="c-num">1.1</span>]
+no  = [<span class="c-num">0.0</span>, -<span class="c-num">0.04</span>, -<span class="c-num">0.12</span>, -<span class="c-num">0.35</span>, -<span class="c-num">0.7</span>, -<span class="c-num">0.95</span>, -<span class="c-num">1.05</span>]</code></pre></div>
+          <p>
+            It draws two phrasings starting together and separating around layer 2.6 — the README's
+            caption says they “track together early, then commit to opposite answers”. Two paragraphs
+            below it, the same README reports the measurement: <b>8.9&times; apart at layer 0</b>, and
+            the measured curve is flat. The figure also has seven x-positions for a six-layer model.
+            A committee member who reads the picture before the sentence will form exactly the wrong
+            mental model, and the sentence will look like a correction.
+          </p>
+          <p class="fix"><b>Fix.</b> One word in the caption — call it a schematic — or replace it
+          with the real per-layer curve, which tells a better story anyway: the phrasings never track
+          together at all. Regenerating a published figure two weeks out is the riskier of the two;
+          the caption is free.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">2</span><span class="cs">Experiment C's layer-5 donor is post-final-norm; the patch writes into the pre-norm stream</span><span class="cw a">number</span></summary>
+        <div class="cbody">
+          <p>
+            <code>experiment_e.py</code> harvests donors from <code>acts[L]</code>, which is
+            <code>out.hidden_states[1:]</code>. HuggingFace appends the hidden state <i>before</i>
+            each layer runs and then appends the final-normed state after the loop, so the last entry
+            is normed and the rest are not. Verified on <code>transformers 4.57.1</code>:
+            <code>acts[L] == hook(layers[L])</code> for L&nbsp;=&nbsp;0–4, and
+            <code>acts[5] == norm(hook(layers[5]))</code>.
+          </p>
+          <p>
+            At layer 5 the patch should be deterministic and recovery should be exactly 1.000.
+            All 18 baby-MedGemma runs report 0.273–0.817. All 16 retired-nanoVLM runs under
+            <code>results/E/</code> — a decoder with no post-loop normalisation on the captured
+            state — report exactly 1.000. The double-applied <span class="num">(1+w)</span> gain
+            explains the split, and it bites hardest for near-boundary donors, which flip-cluster
+            donors are by construction. <b>Layers 0–4 are unaffected</b>, and that is where the
+            finding lives.
+          </p>
+          <p class="fix"><b>Fix.</b> Capture donors with a forward hook on
+          <code>layers[L]</code>, exactly as <code>jlens.py</code> already does, instead of reading
+          <code>acts[L]</code>. Changes <code>recovery_rank1_by_layer[5]</code> only. Post-defense —
+          but have the diagnosis ready, because the dip is visible in every E figure.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">3</span><span class="cs">The published divergence includes activation length, which the decision provably ignores</span><span class="cw a">number</span></summary>
+        <div class="cbody">
+          <p>
+            The margin is degree-zero homogeneous in the pre-norm activation — scaling it by 100
+            leaves the margin bit-identical, and the gradient is orthogonal to the activation to
+            1.9e&minus;09. The lens reads <span class="num">J&middot;h</span>, which is not
+            scale-invariant. So part of every reported <code>lens_divergence</code> is variation in
+            <span class="num">‖h‖</span> across phrasings, and that variation cannot change any
+            answer.
+          </p>
+          <p>
+            Paraphrases differ in token count and content, which is exactly the perturbation that
+            moves the norm, so the contamination is not hypothetical. It inflates flip and stable
+            clusters alike, so the <i>ratio</i> is partially protected — which is another reason the
+            README is right to quote 8.9&times; rather than the absolute divergence.
+          </p>
+          <p class="fix"><b>Fix.</b> Read the lens on the RMS-normalised activation, or project
+          <span class="num">J</span> onto the subspace orthogonal to <span class="num">h̄</span>.
+          One line, and it would move 8.87 and 0.809 — so this is post-defense. State the direction
+          of the bias if asked: it affects both cluster types, so the ratio moves less than the
+          absolutes.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">4</span><span class="cs">Nothing in the pipeline checks that the lens reading resembles the real margin</span><span class="cw b">missing</span></summary>
+        <div class="cbody">
+          <p>
+            The tuned lens earns its claims with perplexity and bias measured against the model's
+            true final distribution. This lens reports no analogue. Without one, “lens” is doing
+            unearned work — we are asserting that
+            <span class="num">m̂<sub>&ell;</sub></span> tells you something about
+            <span class="num">m</span> without ever having compared them.
+          </p>
+          <p>
+            <code>read_lens</code> already computes the true logits — it needs them for
+            <code>preds</code> — and throws the margin away.
+          </p>
+          <div class="code"><div class="code-head"><span>scripts/experiments/jlens.py</span><span>line 108, the two lines to add</span></div>
+<pre><code>preds = logits.argmax(-<span class="c-num">1</span>).cpu().tolist()
+true  = (logits[:, <span class="c-num">1</span>] - logits[:, <span class="c-num">0</span>]).cpu().numpy()   <span class="c-com"># add</span>
+<span class="c-com"># then per layer: np.corrcoef(lens_margin[:, L], true)[0, 1]</span></code></pre></div>
+          <p class="fix"><b>Fix.</b> Two lines, no retraining, adds a new number rather than moving
+          an old one. This is the single highest-value addition on the list: it converts “the lens is
+          corroboration” from a posture into a measurement, and gives you a direct answer to the
+          obvious question. Safe to run before the defense on a fresh output directory.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">5</span><span class="cs">“256 examples” is six questions, taken in order, from the set the lens is then read on</span><span class="cw b">method</span></summary>
+        <div class="cbody">
+          <p>
+            <code>DataLoader(dataset, batch_size=1, collate_fn=collate)</code> at line 61 has no
+            <code>shuffle</code>, and <code>make_eval_clusters</code> emits 49 consecutive rows per
+            question. The first 256 rows are clusters 0–5. The Jacobian is therefore an average over
+            <b>six images and six findings</b>, out of 231 or 1,500 — and those same rows are inside
+            the set the lens is later read on, so the fit is in-sample.
+          </p>
+          <p>
+            Mitigating: the quantity being averaged is a derivative of the model, not a fit to
+            labels, so in-sample-ness cannot leak flip information the way a supervised probe would.
+            The narrow sample is the real issue.
+          </p>
+          <p class="fix"><b>Fix.</b> <code>shuffle=True</code> on the fit loader — one keyword, turns
+          six questions into 256. Fitting on the validation split instead is a three-line change.
+          Both alter <span class="num">J</span> and so would move published numbers: post-defense.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">6</span><span class="cs">It is not a first-order Taylor expansion, and two of its three fitted quantities cancel</span><span class="cw b">wording</span></summary>
+        <div class="cbody">
+          <p>
+            A Taylor expansion about <span class="num">H̄</span> would be
+            <span class="num">g(H̄) + &nabla;g(H̄)&middot;(h &minus; H̄)</span> — the function and the
+            gradient <i>evaluated at</i> <span class="num">H̄</span>. The code uses
+            <span class="num">E[g(h)]</span> and <span class="num">E[&nabla;g(h)]</span>, both
+            dataset averages, which differ by curvature. The correct name is an
+            <b>average-derivative estimator</b>, and by Stein's lemma it is the population OLS
+            coefficient under Gaussian activations — a stronger and more interesting statement than
+            the Taylor one, as <a href="#s4">section 04</a> works through.
+          </p>
+          <p>
+            Relatedly, <span class="num">m̄</span> and <span class="num">H̄</span> are constants
+            across examples and cancel exactly in every reported statistic. The results depend on the
+            <b>direction of <span class="num">J</span> and nothing else</b>. That is a robustness
+            property worth claiming, not a defect.
+          </p>
+          <p class="fix"><b>Fix.</b> Wording only — no number moves. Say “average-derivative
+          estimator” or “gradient-fitted linear probe”, not “Taylor expansion”, and note the
+          cancellation as a strength.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">7</span><span class="cs">The gradients are averaged with their signs, which both attribution-patching papers deliberately avoid</span><span class="cw b">method</span></summary>
+        <div class="cbody">
+          <p>
+            Syed et al. take the absolute value per pair and then the mean. AtP* is explicit about
+            why: taking the absolute value inside the expectation “decreases the chance that
+            estimates across prompt pairs with positive and negative effects might erroneously lead
+            to a significantly smaller estimate.” <code>fit_jacobian</code> sums raw signed vectors,
+            so if <span class="num">&nabla;m</span> points in opposing directions across examples,
+            <span class="num">‖J̄‖</span> collapses while every individual gradient is large.
+          </p>
+          <p>
+            Note this is the right thing to do <i>for a lens</i> — a lens needs one global linear map,
+            and averaging signed gradients is how you get the OLS estimand. It is the wrong thing for
+            an importance score. The two uses have been conflated in the write-up.
+          </p>
+          <p class="fix"><b>Fix.</b> A diagnostic, not a change: report per layer the mean
+          <span class="num">cos(&nabla;m<sub>i</sub>, J̄)</span> and
+          <span class="num">‖J̄‖ / E‖&nabla;m<sub>i</sub>‖</span>. High values earn the single-global-map
+          claim outright. Adds numbers, moves none.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">8</span><span class="cs"><code>lens_divergence_by_layer</code> is not comparable across layers, or across the two models</span><span class="cw c">reporting</span></summary>
+        <div class="cbody">
+          <p>
+            The absolute divergence is <span class="num">std(J<sub>&ell;</sub>&middot;h)</span>, which
+            scales with <span class="num">‖J<sub>&ell;</sub>‖</span>. That norm differs by layer, so a
+            rise across depth can be the Jacobian growing rather than the phrasings separating. It
+            also differs by model: the probe's divergences sit near 2.0 and the scaled model's near
+            0.045, a factor of 45 that says nothing about robustness.
+          </p>
+          <p class="fix"><b>Fix.</b> None needed for the published claims — the README already quotes
+          the <i>ratio</i>, which is scale-free, and the point-biserial, which is scale-free. Just
+          never put the two models' absolute divergences on one axis, and prefer the ratio for any
+          cross-layer plot.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">9</span><span class="cs">The commit layer is left-censored, and on the scaled model it is one decimal from vanishing</span><span class="cw c">reporting</span></summary>
+        <div class="cbody">
+          <p>
+            <code>commit</code> is the shallowest layer clearing <code>div_flip &gt; 2 * div_noflip</code>.
+            The condition holds at every layer of both runs, so the answer is the first layer hooked.
+            Nothing shallower is measured — the token embedding and layer 0's own sublayers are inside
+            the black box — so “layer 0” is a floor.
+          </p>
+          <p>
+            On the probe the ratios are 8.57–9.77 and the verdict is unambiguous. On the scaled model
+            they are 2.23, 2.02, 2.02, 1.99, 1.97, 1.95: layer 0 clears the threshold and the rest sit
+            just below. Change the constant from 2 to 2.1 and the reported commit layer becomes
+            <code>None</code>.
+          </p>
+          <p class="fix"><b>Fix.</b> Hook <code>hidden_states[0]</code> (the embeddings) and the
+          attention/MLP sublayer outputs, so layer 0 becomes a measurement rather than the edge of the
+          instrument. Report the ratio curve alongside the commit layer so the threshold's role is
+          visible. Neither moves an existing number.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">10</span><span class="cs">The lens and the patch it corroborates were run on different checkpoints</span><span class="cw c">provenance</span></summary>
+        <div class="cbody">
+          <p>
+            Probe: jlens at 1,500 steps (early-stopped 750, acc 0.887, flip 0.0996) against experiment
+            C at 2,000 steps (early-stopped 225, acc 0.897, flip 0.0866). Scaled: 8,000 steps against
+            12,000. Same recipe, same regime, same seed, different budget.
+          </p>
+          <p>
+            For the qualitative claim — both methods point at the early layers — this is adequate, and
+            both models sit in the same behavioural regime. For any regression of predicted against
+            measured margin change it is not: that comparison needs one checkpoint and one scalar.
+          </p>
+          <p class="fix"><b>Fix.</b> Run both from a single <code>--model-steps</code> in one driver.
+          The two scripts already share <code>train_model</code>, so this is a scheduling change, not
+          a code change.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><span class="cn">11</span><span class="cs">One seed, no error bars, and the per-example readings are computed then discarded</span><span class="cw c">coverage</span></summary>
+        <div class="cbody">
+          <p>
+            Experiments A and B run 8 and 24 seeds. <code>jlens.py</code> ran once, at seed 0, for each
+            model. The 8.9&times; and the 0.81 have no interval attached to them.
+          </p>
+          <p>
+            Separately, <code>read_lens</code> builds a per-example, per-layer table of lens margins —
+            <code>rows</code>, with cluster id, phenomenon, prediction and the six readings — and
+            <code>analyze</code> reduces it to eight aggregate arrays. The table is never written out,
+            which is why the traces in <a href="#s6">section 06</a> had to be sampled from the
+            published statistics rather than plotted from a log.
+          </p>
+          <p class="fix"><b>Fix.</b> Seeds 0–7 with mean and standard deviation of the ratio, matching
+          the rest of the project — this is compute, not code, and it adds an interval rather than
+          changing the point estimate. And one <code>np.save</code> of <code>rows</code>, which unlocks
+          per-register breakdowns, the faithfulness check in caveat 4, and real traces for the figure.</p>
+        </div>
+      </details>
+
+    </div>
+    <div class="panel-foot">
+      Four of these (4, 7, 8, 9) add numbers without moving any. Two (1, 6) are wording. The rest
+      change a published value and belong after the defense.
+    </div>
+  </div>
+
+  <h3>The one experiment that would settle it</h3>
+
+  <p>
+    Everything above is housekeeping next to a single missing measurement. Syed et al. validated
+    attribution patching by scattering its prediction against the true effect of the patch it
+    approximates, and reported the fit honestly:
+  </p>
+
+  <blockquote>
+    <p>“Surprisingly, we find a fairly weak correlation between activation and attribution patching
+    scores (R&sup2; = 0.27). Further, the line of best fit has gradient 0.531, suggesting that
+    attribution patching estimates the effect of activation patching as twice as important as it
+    really is.”</p>
+    <cite>Syed, Rager &amp; Conmy, <a href="https://arxiv.org/abs/2310.10348">Attribution Patching Outperforms Automated Circuit Discovery</a> (2023), §5.1</cite>
+  </blockquote>
+
+  <p>
+    You are three small changes from the same plot on your own model. <code>_patch_pred</code> in
+    <code>experiment_e.py</code> already runs the patched forward pass and discards the margin, keeping
+    only <code>int(logits.argmax(-1))</code>. Return the margin instead. Compute
+    <span class="num">J<sub>&ell;</sub>&middot;(h<sub>&ell;</sub><sup>donor</sup> &minus; h<sub>&ell;</sub><sup>target</sup>)</span>
+    for the same donor–target–layer triples on one checkpoint. Scatter the two and report R&sup2; and
+    slope.
+  </p>
+
+  <p>
+    If that R&sup2; beats 0.27, the lens stops needing a defense and becomes a validated instrument
+    with a published benchmark behind it. If it does not, you will have found that out yourself,
+    quantified, with the framing already in place — which is a far better position than having a
+    committee find it. Either way the causal result is untouched, because the patch is measured, not
+    estimated.
+  </p>
+</section>
+
+<!-- ================================================================= 10 -->
+<section id="s10">
+  <span class="snum">10 — Run it</span>
+  <h2>Reproducing, and what each flag costs</h2>
+
+  <p>
+    The lens needs a trained model, so <code>jlens.py</code> trains one first — there is no
+    checkpoint-loading path. Everything comes from <code>train_model</code> with the fixed recipe, so
+    the run is determined by the seed and the step budget.
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>the two shipped invocations</span><span>scripts/run/run_sae_jlens_v2.sh</span></div>
+<pre><code><span class="c-com"># the scaled grounded model -> results_transfer/jlens/jlens.json</span>
+CUDA_VISIBLE_DEVICES=1 python scripts/experiments/jlens.py \
+    --arch gemma --grounding-token --model-steps <span class="c-num">8000</span> \
+    --out results_transfer/jlens
+
+<span class="c-com"># the retired 1,841-question probe -> results_gemma/jlens_gemma/jlens.json</span>
+python scripts/experiments/jlens.py --arch gemma --model-steps <span class="c-num">1500</span> \
+    --out results_gemma/jlens_gemma</code></pre>
+  </div>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th scope="col">Flag</th><th scope="col">Default</th><th scope="col">What it changes</th></tr></thead>
+    <tbody>
+      <tr><th scope="row"><code>--seed</code></th><td class="n">0</td><td>model init, data order, the whole run. Only 0 has been run.</td></tr>
+      <tr><th scope="row"><code>--model-steps</code></th><td class="n">1500</td><td>training budget. Early stopping usually bites first.</td></tr>
+      <tr><th scope="row"><code>--n-fit</code></th><td class="n">256</td><td>rows used for the Jacobian — six questions at the default, see caveat 5.</td></tr>
+      <tr><th scope="row"><code>--grounding-token</code></th><td class="n">off</td><td>prepends MedSigLIP's pooled embedding. Needs the pooled cache.</td></tr>
+      <tr><th scope="row"><code>--arch</code></th><td class="n">gemma</td><td>accepted and ignored; kept so the shell drivers keep working.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <span class="tag">Cost</span>
+    <p>
+      The lens itself is cheap. <code>fit_jacobian</code> is 256 forward-and-backward passes at batch
+      size 1, and <code>read_lens</code> is one forward pass over the evaluation set at batch 128 —
+      11,319 rows on the probe, 73,500 on the scaled model. Training the model beforehand dominates
+      the wall clock by a wide margin, and the frozen MedSigLIP features are read from cache, never
+      recomputed.
+    </p>
+  </div>
+
+  <p>
+    A last note on what to say if the lens is challenged directly. It is not an independent
+    corroboration of the causal patch — it is the first-order approximation of that same patch, and
+    a first-order approximation agreeing with the thing it approximates is a consistency check.
+    The independent legs of the argument are the intervention itself, whose random-direction control
+    sits at 0.00, and the unsupervised decomposition in
+    <a href="sae_explainer.html">the sparse-autoencoder explainer</a>, which recovers the same
+    direction without ever being shown a flip label. The lens's job is resolution: it is the only one
+    of the three you can afford to run on every row.
+  </p>
+</section>
+
+<footer>
+  <p>
+    <b>FlipLens</b> — an interactive primer on <code>scripts/experiments/jlens.py</code>. Companion
+    to <a href="sae_explainer.html">the sparse-autoencoder explainer</a>. Every measured number is
+    read from a committed result JSON: <code>results_gemma/jlens_gemma/jlens.json</code>,
+    <code>results_transfer/jlens/jlens.json</code>, <code>results_gemma/E/augmented_s0/</code> and
+    <code>results_transfer_patch/augmented_s0/</code>. Architectural claims were verified against
+    <code>transformers 4.57.1</code>. No published result is recomputed here.
+  </p>
+  <p>
+    Sources for the theory: Elhage et al.,
+    <a href="https://transformer-circuits.pub/2021/framework/index.html">A Mathematical Framework for Transformer Circuits</a>;
+    Ameisen, Lindsey, Pearce, Gurnee et al.,
+    <a href="https://transformer-circuits.pub/2025/attribution-graphs/methods.html">Circuit Tracing</a>;
+    nostalgebraist,
+    <a href="https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens">interpreting GPT: the logit lens</a>;
+    Belrose et al.,
+    <a href="https://arxiv.org/abs/2303.08112">Eliciting Latent Predictions with the Tuned Lens</a>;
+    Nanda,
+    <a href="https://www.neelnanda.io/mechanistic-interpretability/attribution-patching">Attribution Patching</a>;
+    Syed, Rager &amp; Conmy,
+    <a href="https://arxiv.org/abs/2310.10348">Attribution Patching Outperforms Automated Circuit Discovery</a>;
+    Kramár, Lieberum, Shah &amp; Nanda,
+    <a href="https://arxiv.org/abs/2403.00745">AtP*</a>.
+  </p>
+  <div class="tocard">
+    <a href="#s2"><span class="n">02</span><span class="t">One dot product</span><span class="d">why the decision is linear one layer too late</span></a>
+    <a href="#s4"><span class="n">04</span><span class="t">Calculus = regression</span><span class="d">Stein's lemma, and where it stops holding</span></a>
+    <a href="#s6"><span class="n">06</span><span class="t">A flip, close up</span><span class="d">spread against distance to the boundary</span></a>
+    <a href="#s9"><span class="n">09</span><span class="t">Caveats</span><span class="d">eleven things, and the fix for each</span></a>
+  </div>
+</footer>
+
+</div>
+<script>
+"use strict";
+"use strict";
+/* ==========================================================================
+   Shared utilities
+   ========================================================================== */
+const SANS = 'ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+const MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace';
+/* the stacks above carry double quotes, which would terminate a style="..." attribute
+   at the first family name. These are the versions safe to interpolate into markup. */
+const SANS_A = SANS.replace(/"/g, "'");
+const MONO_A = MONO.replace(/"/g, "'");
+
+function themeColors(){
+  const s = getComputedStyle(document.documentElement);
+  const g = n => s.getPropertyValue('--' + n).trim();
+  return {
+    ink:g('ink'), ink2:g('ink-2'), ink3:g('ink-3'),
+    blue:g('blue'), blue2:g('blue-2'), amber:g('amber'), amber2:g('amber-2'),
+    grey:g('grey'), rule:g('rule'), ruleSoft:g('rule-soft'),
+    panel:g('panel'), panel2:g('panel-2'), sunk:g('sunk'),
+    warn:g('warn'), ok:g('ok'), blueWash:g('blue-wash'), amberWash:g('amber-wash'),
+    /* chart marks — validated categorical slots, de-emphasis, and chrome */
+    v1:g('viz-1'), v2:g('viz-2'), vmute:g('viz-mute'),
+    vgrid:g('viz-grid'), vaxis:g('viz-axis')
+  };
+}
+let C = themeColors();
+
+/* the viewer has three theme states: explicit dark, explicit light, and unstamped
+   (system), where only prefers-color-scheme separates the two. */
+function isDark(){
+  const t = document.documentElement.getAttribute('data-theme');
+  if(t === 'dark') return true;
+  if(t === 'light') return false;
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+function debounce(fn, ms){
+  let h = 0;
+  return function(){ clearTimeout(h); h = setTimeout(fn, ms); };
+}
+
+const REDRAWS = [];
+function onTheme(fn){ REDRAWS.push(fn); }
+function refreshTheme(){ C = themeColors(); REDRAWS.forEach(f => { try{ f(); }catch(e){} }); }
+try{
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshTheme);
+}catch(e){}
+new MutationObserver(refreshTheme).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
+
+function mkCanvas(id){
+  const cv = document.getElementById(id);
+  if(!cv) return null;
+  const W = cv.width, H = cv.height;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
+  cv.style.width = '100%';
+  cv.style.maxWidth = W + 'px';
+  cv.style.minWidth = Math.min(W, 660) + 'px';
+  cv.style.height = 'auto';
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return {cv, ctx, W, H, dpr};
+}
+function clear(c){
+  c.ctx.setTransform(c.dpr,0,0,c.dpr,0,0);
+  c.ctx.clearRect(0,0,c.W,c.H);
+}
+function txt(ctx, s, x, y, {size=11, font=SANS, color=null, align='left', baseline='alphabetic', weight=''}={}){
+  ctx.save();
+  ctx.font = (weight ? weight+' ' : '') + size + 'px ' + font;
+  ctx.fillStyle = color || C.ink2;
+  ctx.textAlign = align; ctx.textBaseline = baseline;
+  ctx.fillText(s, x, y);
+  ctx.restore();
+}
+function line(ctx,x1,y1,x2,y2,color,w=1,dash=null){
+  ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=w;
+  if(dash) ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); ctx.restore();
+}
+function rect(ctx,x,y,w,h,color){ ctx.fillStyle=color; ctx.fillRect(x,y,w,h); }
+function fmt(v,n=3){ return (v===null||v===undefined||!isFinite(v)) ? '—' : v.toFixed(n); }
+
+/* Axis ticks round to clean numbers — a raw data maximum divided by four gives
+   0.649 / 0.487 / 0.325, which nobody reads. */
+function niceStep(raw){
+  if(!(raw > 0)) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw/mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+}
+function niceMax(v, n){
+  const step = niceStep(v/n);
+  return {max: step*n, step};
+}
+function tickList(max, n){
+  const step = niceStep(max/n), out = [];
+  for(let v = 0; v <= max + step*1e-6; v += step) out.push(v);
+  return out;
+}
+function tickFmt(step){
+  let d = 0;
+  while(d < 4 && Math.abs(step*Math.pow(10,d) - Math.round(step*Math.pow(10,d))) > 1e-9) d++;
+  return v => v.toFixed(d);
+}
+
+/* ---- mark specs -------------------------------------------------------
+   A bar grows from the baseline with a 4px rounded data-end and a square
+   foot. Below ~5px of width or height the radius is dropped rather than
+   deforming the mark. Adjacent bars are separated by a 2px surface gap,
+   never by a stroke. */
+const GAP = 2;                       // the surface gap, one consistent width
+function barUp(ctx, x, w, yTop, yBase, color, r){
+  const h = yBase - yTop;
+  if(h <= 0 || w <= 0) return;
+  ctx.fillStyle = color;
+  const rad = Math.min(r === undefined ? 4 : r, w/2, h);
+  if(rad < 1.5 || w < 5){ ctx.fillRect(x, yTop, w, h); return; }
+  ctx.beginPath();
+  ctx.moveTo(x, yBase);
+  ctx.lineTo(x, yTop + rad);
+  ctx.arcTo(x, yTop, x + rad, yTop, rad);
+  ctx.lineTo(x + w - rad, yTop);
+  ctx.arcTo(x + w, yTop, x + w, yTop + rad, rad);
+  ctx.lineTo(x + w, yBase);
+  ctx.closePath(); ctx.fill();
+}
+function barDn(ctx, x, w, yBase, yBot, color, r){
+  const h = yBot - yBase;
+  if(h <= 0 || w <= 0) return;
+  ctx.fillStyle = color;
+  const rad = Math.min(r === undefined ? 4 : r, w/2, h);
+  if(rad < 1.5 || w < 5){ ctx.fillRect(x, yBase, w, h); return; }
+  ctx.beginPath();
+  ctx.moveTo(x, yBase);
+  ctx.lineTo(x, yBot - rad);
+  ctx.arcTo(x, yBot, x + rad, yBot, rad);
+  ctx.lineTo(x + w - rad, yBot);
+  ctx.arcTo(x + w, yBot, x + w, yBot - rad, rad);
+  ctx.lineTo(x + w, yBase);
+  ctx.closePath(); ctx.fill();
+}
+/* a dot with the 2px surface ring, so it stays legible over a line */
+function dot(ctx, x, y, rr, color, ring){
+  ctx.save();
+  ctx.beginPath(); ctx.arc(x, y, rr + 2, 0, 6.2832);
+  ctx.fillStyle = ring || C.sunk; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, rr, 0, 6.2832);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.restore();
+}
+/* solid hairline gridline, one step off the surface — never dashed */
+function grid(ctx, x1, y1, x2, y2){ line(ctx, x1, y1, x2, y2, C.vgrid, 1); }
+
+/* ---- the hover layer --------------------------------------------------
+   Tooltips enhance, never gate: every value here is also in a stat tile,
+   a direct label, or the table view. Keyboard focus shows the same rows. */
+function attachTip(c, hitTest){
+  const wrap = c.cv.parentElement;
+  const tip = document.createElement('div');
+  tip.className = 'viz-tip';
+  tip.setAttribute('role','status');
+  tip.setAttribute('aria-live','polite');
+  wrap.appendChild(tip);
+  let shown = false;
+  function place(hit, cx, cy){
+    if(!hit){ if(shown){ tip.dataset.on = '0'; tip.textContent = ''; shown = false; } return; }
+    tip.textContent = '';
+    const t = document.createElement('span');
+    t.className = 'tt'; t.textContent = hit.title;
+    tip.appendChild(t);
+    (hit.rows || []).forEach(r => {
+      const row = document.createElement('span');
+      row.className = 'rr';
+      if(r.color){
+        const k = document.createElement('span');
+        k.className = 'kk'; k.style.background = r.color;
+        row.appendChild(k);
+      }
+      const v = document.createElement('span');
+      v.className = 'vv'; v.textContent = r.value;          // values lead
+      row.appendChild(v);
+      if(r.label){
+        const n = document.createElement('span');
+        n.className = 'nn'; n.textContent = r.label;         // labels follow
+        row.appendChild(n);
+      }
+      tip.appendChild(row);
+    });
+    const sx = c.cv.offsetWidth / c.W, sy = c.cv.offsetHeight / c.H;
+    const px0 = (hit.x !== undefined ? hit.x : cx) * sx;
+    const py0 = (hit.y !== undefined ? hit.y : cy) * sy;
+    // measure once visible, then keep the whole tooltip inside the plot: flip
+    // below the point when there is no room above, and clamp horizontally.
+    tip.dataset.on = '1'; shown = true;
+    tip.dataset.below = '0';
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    const below = py0 - h - 10 < 0;
+    tip.dataset.below = below ? '1' : '0';
+    const maxX = c.cv.offsetWidth - w/2 - 2;
+    tip.style.left = Math.max(w/2 + 2, Math.min(maxX, px0)) + 'px';
+    const maxY = c.cv.offsetHeight - (below ? h + 12 : 0) - 2;
+    tip.style.top = Math.max(below ? 2 : h + 12, Math.min(maxY, py0)) + 'px';
+  }
+  function toLocal(ev){
+    const r = c.cv.getBoundingClientRect();
+    return [ (ev.clientX - r.left) * (c.W / r.width), (ev.clientY - r.top) * (c.H / r.height) ];
+  }
+  c.cv.addEventListener('pointermove', ev => {
+    const [x,y] = toLocal(ev);
+    place(hitTest(x,y), x, y);
+  });
+  c.cv.addEventListener('pointerleave', () => place(null));
+  c.cv.addEventListener('blur', () => place(null));
+  return {show:place, hide:()=>place(null)};
+}
+
+/* ---- the table-view twin ----------------------------------------------
+   Every chart that carries values a reader might need has one. It is also
+   the relief channel for the sub-3:1 light-mode orange. */
+function attachTable(panelId, caption, build){
+  const panel = document.getElementById(panelId);
+  if(!panel) return {refresh(){}};
+  const body = panel.querySelector('.panel-body');
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;justify-content:flex-end;margin-top:.75rem';
+  const btn = document.createElement('button');
+  btn.className = 'viz-toggle';
+  btn.setAttribute('aria-expanded','false');
+  btn.textContent = 'Table view';
+  const holder = document.createElement('div');
+  holder.className = 'viz-table tbl-wrap';
+  holder.hidden = true;
+  const tblId = panelId + '-table';
+  holder.id = tblId;
+  btn.setAttribute('aria-controls', tblId);
+  row.appendChild(btn);
+  body.appendChild(row); body.appendChild(holder);
+  function render(){
+    if(holder.hidden) return;
+    const d = build();
+    holder.textContent = '';
+    const t = document.createElement('table');
+    const cap = document.createElement('caption');
+    cap.style.cssText = 'caption-side:top;text-align:left;font-family:'+SANS_A
+      + ';font-size:11px;color:var(--ink-3);padding:.4rem .7rem';
+    cap.textContent = caption;
+    t.appendChild(cap);
+    const thead = document.createElement('thead'), htr = document.createElement('tr');
+    d.cols.forEach((cname,i) => {
+      const th = document.createElement('th');
+      th.textContent = cname;
+      th.scope = 'col';
+      if(i) th.className = 'n';
+      htr.appendChild(th);
+    });
+    thead.appendChild(htr); t.appendChild(thead);
+    const tb = document.createElement('tbody');
+    d.rows.forEach(r => {
+      const tr = document.createElement('tr');
+      r.forEach((cell,i) => {
+        const td = document.createElement(i ? 'td' : 'th');
+        if(!i) td.scope = 'row';
+        td.textContent = String(cell);
+        if(i) td.className = 'n';
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); holder.appendChild(t);
+  }
+  btn.addEventListener('click', () => {
+    holder.hidden = !holder.hidden;
+    btn.setAttribute('aria-expanded', String(!holder.hidden));
+    btn.textContent = holder.hidden ? 'Table view' : 'Hide table';
+    render();
+  });
+  return {refresh: render};
+}
+function setText(id,v){ const e=document.getElementById(id); if(e) e.textContent = v; }
+
+/* ---- deterministic RNG ---- */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function mkGauss(rng){
+  let spare = null;
+  return function(){
+    if(spare !== null){ const v = spare; spare = null; return v; }
+    let u, v, s;
+    do { u = rng()*2-1; v = rng()*2-1; s = u*u + v*v; } while(s >= 1 || s === 0);
+    const f = Math.sqrt(-2*Math.log(s)/s);
+    spare = v*f; return u*f;
+  };
+}
+/* Marsaglia–Tsang gamma sampler */
+function mkGamma(rng, gauss){
+  return function gam(a){
+    if(a < 1) return gam(a+1) * Math.pow(rng(), 1/a);
+    const d = a - 1/3, c = 1/Math.sqrt(9*d);
+    for(;;){
+      let x, v;
+      do { x = gauss(); v = 1 + c*x; } while(v <= 0);
+      v = v*v*v;
+      const u = rng();
+      if(u < 1 - 0.0331*x*x*x*x) return d*v;
+      if(Math.log(u) < 0.5*x*x + d*(1 - v + Math.log(v))) return d*v;
+    }
+  };
+}
+/* |cos| between a random unit vector in R^d and a fixed direction:
+   cos^2 ~ Beta(1/2, (d-1)/2)  — exact, and O(1) per draw. */
+function mkAbsCos(gam){
+  return function(d){
+    const x = gam(0.5), y = gam((d-1)/2);
+    return Math.sqrt(x/(x+y));
+  };
+}
+function quantile(sorted, q){
+  if(!sorted.length) return NaN;
+  const i = Math.min(sorted.length-1, Math.max(0, Math.floor(q*(sorted.length-1))));
+  return sorted[i];
+}
+
+/* ==========================================================================
+   Scroll progress + active nav
+   ========================================================================== */
+(function(){
+  const bar = document.getElementById('progress');
+  const links = Array.from(document.querySelectorAll('.jump a'));
+  function upd(){
+    const h = document.documentElement;
+    const max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max > 0 ? (h.scrollTop / max * 100) : 0) + '%';
+  }
+  document.addEventListener('scroll', upd, {passive:true});
+  upd();
+  if('IntersectionObserver' in window){
+    const io = new IntersectionObserver(es => {
+      es.forEach(e => {
+        if(!e.isIntersecting) return;
+        links.forEach(a => a.style.color = '');
+        const a = links.find(l => l.getAttribute('href') === '#' + e.target.id);
+        if(a) a.style.color = C.blue;
+      });
+    }, {rootMargin:'-45% 0px -50% 0px'});
+    document.querySelectorAll('section[id]').forEach(s => io.observe(s));
+  }
+})();
+/* Every number below is read verbatim from a committed result JSON. */
+const RUNS = {
+  probe: {
+    label: "1,841-question probe",
+    file: "results_gemma/jlens_gemma/jlens.json",
+    clusters: 231, flipRate: 0.09956709956709957,
+    flipping: 23, rows: 11319,
+    acc: 0.8866213151927438, accAblated: 0.7959183673469388, gap: 0.09070294784580502,
+    steps: 1500, earlyStop: 750, valAcc: 0.9282511210762332,
+    params: 13861248, nFit: 256, useGround: false,
+    divAll:    [0.390177, 0.378442, 0.396195, 0.410375, 0.415137, 0.413173],
+    divFlip:   [1.94013, 1.974171, 2.030315, 2.055595, 2.04168, 2.018938],
+    divStable: [0.218788, 0.201991, 0.215499, 0.228451, 0.235279, 0.235613],
+    ratio:     [8.8676, 9.7735, 9.4215, 8.998, 8.6777, 8.5689],
+    pb:        [0.809146, 0.806432, 0.788718, 0.778803, 0.771414, 0.769398],
+    commit: 0,
+    patch: { rec: [1.0, 1.0, 1.0, 1.0, 1.0, 0.6], ctl: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], net: [1.0, 1.0, 1.0, 1.0, 1.0, 0.6], nTargets: 20, source: "results_gemma/E/augmented_s0/experiment_e.json" }
+  },
+  scaled: {
+    label: "scaled grounded model",
+    file: "results_transfer/jlens/jlens.json",
+    clusters: 1500, flipRate: 0.048666666666666664,
+    flipping: 73, rows: 73500,
+    acc: 0.7589795918367347, accAblated: 0.5113333333333333, gap: 0.24764625850340138,
+    steps: 8000, earlyStop: 5500, valAcc: 0.7514557967178401,
+    params: 14078592, nFit: 256, useGround: true,
+    divAll:    [0.014819, 0.02075, 0.02307, 0.023603, 0.02384, 0.024165],
+    divFlip:   [0.031169, 0.039851, 0.044351, 0.04472, 0.04482, 0.044949],
+    divStable: [0.013982, 0.019773, 0.021981, 0.022523, 0.022767, 0.023102],
+    ratio:     [2.2292, 2.0155, 2.0176, 1.9855, 1.9686, 1.9457],
+    pb:        [0.264553, 0.230343, 0.23688, 0.234721, 0.23351, 0.230629],
+    commit: 0,
+    patch: { rec: [0.8333, 0.9667, 1.0, 1.0, 1.0, 0.7167], ctl: [0.0167, 0.0, 0.0167, 0.0167, 0.0, 0.1], net: [0.8167, 0.9667, 0.9833, 0.9833, 1.0, 0.6167], nTargets: 60, source: "results_transfer_patch/augmented_s0/experiment_e.json" }
+  }
+};
+
+/* ==========================================================================
+   Shared plot frame — a left-labelled, bottom-labelled linear axis pair.
+   ========================================================================== */
+function frame(c, {l=58, r=22, t=18, b=38}={}){
+  return {l, r, t, b, x0:l, x1:c.W-r, y0:t, y1:c.H-b, w:c.W-l-r, h:c.H-t-b};
+}
+function yAxis(c, f, min, max, {fmtv=null, label=null, ticks=5}={}){
+  const ctx = c.ctx, span = max - min || 1;
+  const step = niceStep(span/ticks);
+  const ff = fmtv || tickFmt(step);
+  const first = Math.ceil(min/step)*step;
+  for(let v=first; v<=max+step*1e-6; v+=step){
+    const y = f.y1 - (v-min)/span*f.h;
+    grid(ctx, f.x0, y, f.x1, y);
+    txt(ctx, ff(v), f.x0-8, y, {size:10.5, font:MONO, color:C.ink3, align:'right', baseline:'middle'});
+  }
+  if(label) {
+    ctx.save(); ctx.translate(14, (f.y0+f.y1)/2); ctx.rotate(-Math.PI/2);
+    txt(ctx, label, 0, 0, {size:10.5, color:C.ink3, align:'center', baseline:'middle'});
+    ctx.restore();
+  }
+  return v => f.y1 - (v-min)/span*f.h;
+}
+function xLayers(c, f, n, label){
+  const ctx = c.ctx, step = f.w/(n-1);
+  for(let i=0;i<n;i++){
+    const x = f.x0 + i*step;
+    txt(ctx, 'L'+i, x, f.y1+15, {size:10.5, font:MONO, color:C.ink3, align:'center', baseline:'top'});
+  }
+  if(label) txt(ctx, label, (f.x0+f.x1)/2, f.y1+31, {size:10.5, color:C.ink3, align:'center', baseline:'top'});
+  return i => f.x0 + i*step;
+}
+function polyline(ctx, pts, color, w=2){
+  ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=w; ctx.lineJoin='round';
+  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
+  ctx.stroke(); ctx.restore();
+}
+
+/* ==========================================================================
+   02 — the margin is an angle, not a length
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('geo-canvas'); if(!c) return;
+  const ang = document.getElementById('geo-ang'), len = document.getElementById('geo-len');
+  let drag = false;
+
+  function state(){ return {th: +ang.value*Math.PI/180, r: +len.value/100}; }
+
+  function draw(){
+    clear(c);
+    const {th, r} = state();
+    document.getElementById('geo-ang-v').textContent = ang.value + '°';
+    document.getElementById('geo-len-v').textContent = (+len.value/100).toFixed(2);
+
+    const cx = c.W*0.40, cy = c.H*0.55, S = 88;          // origin and one unit
+    const ctx = c.ctx;
+
+    // the decision boundary: orthogonal to u, through the origin
+    line(ctx, cx - 0*S, cy - 2.4*S, cx + 0*S, cy + 1.6*S, C.vaxis, 1.5, [5,4]);
+    txt(ctx, 'decision boundary', cx + 6, cy - 2.4*S + 2, {size:10.5, color:C.ink3, baseline:'top'});
+    txt(ctx, 'model says YES', cx + 8, cy + 1.45*S, {size:10.5, color:C.v1, weight:'600'});
+    txt(ctx, 'model says NO', cx - 8, cy + 1.45*S, {size:10.5, color:C.v2, weight:'600', align:'right'});
+
+    // u = the yes-minus-no direction, drawn along +x
+    const ux = cx + 1.5*S, uy = cy;
+    line(ctx, cx, cy, ux, uy, C.amber, 2.5);
+    ctx.save(); ctx.fillStyle=C.amber; ctx.beginPath();
+    ctx.moveTo(ux+9, uy); ctx.lineTo(ux-4, uy-5); ctx.lineTo(ux-4, uy+5); ctx.closePath(); ctx.fill(); ctx.restore();
+    txt(ctx, 'W_yes − W_no', ux + 12, uy - 12, {size:11, font:MONO, color:C.amber, weight:'600'});
+
+    // h, at angle th from u, length r
+    const hx = cx + Math.cos(th)*r*S, hy = cy - Math.sin(th)*r*S;
+    // the unit-normalised copy, which is what the model actually reads
+    const nx = cx + Math.cos(th)*S,  ny = cy - Math.sin(th)*S;
+
+    ctx.save(); ctx.strokeStyle=C.vaxis; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.arc(cx, cy, S, 0, 6.2832); ctx.stroke(); ctx.restore();
+    txt(ctx, 'unit sphere — what RMSNorm projects onto', cx - S - 6, cy - S - 8,
+        {size:10, color:C.ink3, align:'right'});
+
+    line(ctx, cx, cy, hx, hy, C.v1, 2.5);
+    dot(ctx, nx, ny, 4, C.amber2, C.sunk);
+    dot(ctx, hx, hy, 6.5, C.v1, C.sunk);
+    txt(ctx, 'h', hx + 10, hy - 8, {size:12, font:MONO, color:C.v1, weight:'700'});
+    txt(ctx, 'h/‖h‖', nx + 8, ny + 14, {size:10.5, font:MONO, color:C.amber2});
+
+    // projections onto u, for both
+    line(ctx, hx, hy, hx, cy, C.v1, 1, [3,3]);
+    line(ctx, nx, ny, nx, cy, C.amber2, 1, [3,3]);
+
+    const trueM = Math.cos(th), lensM = r*Math.cos(th);
+    // readout bars, right-hand side
+    const bx = c.W - 150, by = 44, bw = 108;
+    txt(ctx, 'READOUT', bx, by - 14, {size:9.5, color:C.ink3, weight:'650'});
+    const mk = (i, lab, v, col) => {
+      const y = by + i*46;
+      txt(ctx, lab, bx, y, {size:10.5, color:C.ink3});
+      const mid = bx + bw/2, half = bw/2;
+      rect(ctx, bx, y+8, bw, 12, C.sunk);
+      line(ctx, mid, y+6, mid, y+22, C.vaxis, 1);
+      const wpx = Math.max(-half, Math.min(half, v/3*half));
+      rect(ctx, wpx<0 ? mid+wpx : mid, y+8, Math.abs(wpx), 12, col);
+      txt(ctx, (v>=0?'+':'') + v.toFixed(3), bx + bw + 8, y+14,
+          {size:11, font:MONO, color:C.ink, baseline:'middle'});
+    };
+    mk(0, 'true margin', trueM, C.amber);
+    mk(1, 'linear lens', lensM, C.v1);
+
+    setText('geo-true', (trueM>=0?'+':'') + trueM.toFixed(3));
+    setText('geo-lens', (lensM>=0?'+':'') + lensM.toFixed(3));
+    setText('geo-ans', trueM >= 0 ? 'yes' : 'no');
+    setText('geo-err', ((lensM-trueM)>=0?'+':'') + (lensM-trueM).toFixed(3));
+  }
+
+  function fromPointer(ev){
+    const rc = c.cv.getBoundingClientRect();
+    const x = (ev.clientX - rc.left) * (c.W/rc.width), y = (ev.clientY - rc.top) * (c.H/rc.height);
+    const cx = c.W*0.40, cy = c.H*0.55, S = 88;
+    let th = Math.atan2(cy - y, x - cx);
+    if(th < 0) th = 0; if(th > Math.PI) th = Math.PI;
+    ang.value = Math.round(th*180/Math.PI);
+    len.value = Math.max(20, Math.min(300, Math.round(Math.hypot(x-cx, y-cy)/S*100)));
+    draw();
+  }
+  c.cv.addEventListener('pointerdown', e => { drag = true; c.cv.setPointerCapture(e.pointerId); fromPointer(e); });
+  c.cv.addEventListener('pointermove', e => { if(drag) fromPointer(e); });
+  c.cv.addEventListener('pointerup', () => drag = false);
+  c.cv.style.cursor = 'crosshair';
+  [ang, len].forEach(el => el.addEventListener('input', draw));
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   04 — Stein's identity lab
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('st-canvas'); if(!c) return;
+  const els = {n:document.getElementById('st-n'), d:document.getElementById('st-d'),
+               tail:document.getElementById('st-tail'), curv:document.getElementById('st-curv')};
+  let seed = 7;
+
+  /* g(h) = sum_k c_k tanh(a * w_k . h), a genuine multi-index map so that the
+     average gradient and the OLS fit are not forced to coincide by construction. */
+  function build(){
+    const n = +els.n.value, d = +els.d.value, tail = +els.tail.value/100, a = +els.curv.value/100;
+    els['n'] && (document.getElementById('st-n-v').textContent = n);
+    document.getElementById('st-d-v').textContent = d;
+    document.getElementById('st-tail-v').textContent = tail.toFixed(2);
+    document.getElementById('st-curv-v').textContent = a.toFixed(2);
+
+    const rng = mulberry32(seed), gauss = mkGauss(rng);
+    const K = 3, ROGUE = 3, w = [], cf = [];
+    for(let k=0;k<K;k++){
+      const v = new Float64Array(d); let s=0;
+      for(let j=0;j<d;j++){ v[j]=gauss(); s+=v[j]*v[j]; }
+      s = Math.sqrt(s); for(let j=0;j<d;j++) v[j]/=s;
+      w.push(v); cf.push(k===0 ? 1.0 : (rng()*1.2-0.6));
+    }
+    // samples: standard normal, then an asymmetric squashing that breaks Gaussianity
+    const H = [], y = new Float64Array(n), G = new Float64Array(d);
+    for(let i=0;i<n;i++){
+      const h = new Float64Array(d);
+      /* rogue dimensions: a handful of coordinates get high variance AND a heavy
+         tail, via a per-sample scale mixture. This is the residual-stream pathology
+         the tuned-lens paper names, and it is what breaks Stein's identity —
+         anisotropy alone would not, since a Gaussian stays Gaussian under scaling. */
+      const sMix = tail > 0 ? Math.abs(gauss()/Math.max(0.28, Math.abs(gauss()))) : 0;
+      for(let j=0;j<d;j++){
+        const z = gauss();
+        h[j] = (tail > 0 && j < ROGUE) ? z*(1 + tail*6*sMix) : z;
+      }
+      let g = 0;
+      for(let k=0;k<K;k++){
+        let t=0; for(let j=0;j<d;j++) t += w[k][j]*h[j];
+        const th = Math.tanh(a*t);
+        g += cf[k]*th;
+        const dr = cf[k]*a*(1-th*th);
+        for(let j=0;j<d;j++) G[j] += dr*w[k][j];
+      }
+      H.push(h); y[i] = g;
+    }
+    const J = new Float64Array(d); for(let j=0;j<d;j++) J[j] = G[j]/n;
+    return {n, d, H, y, J};
+  }
+
+  /* ridge-regularised normal equations, solved by Cholesky */
+  function ols(H, y, d, n){
+    const hb = new Float64Array(d); let yb = 0;
+    for(let i=0;i<n;i++){ for(let j=0;j<d;j++) hb[j]+=H[i][j]; yb+=y[i]; }
+    for(let j=0;j<d;j++) hb[j]/=n; yb/=n;
+    const A = [], bvec = new Float64Array(d);
+    for(let j=0;j<d;j++) A.push(new Float64Array(d));
+    for(let i=0;i<n;i++){
+      const r = H[i];
+      const dy = y[i]-yb;
+      for(let j=0;j<d;j++){
+        const rj = r[j]-hb[j];
+        bvec[j] += rj*dy;
+        for(let k=j;k<d;k++) A[j][k] += rj*(r[k]-hb[k]);
+      }
+    }
+    const lam = 1e-6*n;
+    for(let j=0;j<d;j++){ A[j][j]+=lam; for(let k=0;k<j;k++) A[j][k]=A[k][j]; }
+    // Cholesky
+    const L = []; for(let j=0;j<d;j++) L.push(new Float64Array(d));
+    for(let j=0;j<d;j++){
+      let s = A[j][j];
+      for(let k=0;k<j;k++) s -= L[j][k]*L[j][k];
+      L[j][j] = Math.sqrt(Math.max(s, 1e-12));
+      for(let i=j+1;i<d;i++){
+        let t = A[i][j];
+        for(let k=0;k<j;k++) t -= L[i][k]*L[j][k];
+        L[i][j] = t/L[j][j];
+      }
+    }
+    const z = new Float64Array(d), beta = new Float64Array(d);
+    for(let i=0;i<d;i++){ let s=bvec[i]; for(let k=0;k<i;k++) s-=L[i][k]*z[k]; z[i]=s/L[i][i]; }
+    for(let i=d-1;i>=0;i--){ let s=z[i]; for(let k=i+1;k<d;k++) s-=L[k][i]*beta[k]; beta[i]=s/L[i][i]; }
+    return {beta, hb, yb};
+  }
+
+  function predict(H, y, wv, hb, yb, n, d){
+    const p = new Float64Array(n); let ssr=0, sst=0;
+    for(let i=0;i<n;i++){
+      let s=yb; for(let j=0;j<d;j++) s += wv[j]*(H[i][j]-hb[j]);
+      p[i]=s; ssr += (y[i]-s)*(y[i]-s); sst += (y[i]-yb)*(y[i]-yb);
+    }
+    return {p, r2: 1 - ssr/(sst||1)};
+  }
+
+  let last = null;
+  function draw(){
+    const {n, d, H, y, J} = build();
+    const {beta, hb, yb} = ols(H, y, d, n);
+    const pj = predict(H, y, J, hb, yb, n, d);
+    const pb = predict(H, y, beta, hb, yb, n, d);
+    let dotp=0, nj=0, nb=0;
+    for(let j=0;j<d;j++){ dotp+=J[j]*beta[j]; nj+=J[j]*J[j]; nb+=beta[j]*beta[j]; }
+    const cos = dotp/(Math.sqrt(nj*nb)||1);
+
+    setText('st-cos', fmt(cos, 3));
+    setText('st-r2j', fmt(pj.r2, 3));
+    setText('st-r2b', fmt(pb.r2, 3));
+    setText('st-scale', fmt(Math.sqrt(nj/(nb||1e-12)), 3));
+
+    clear(c);
+    const ctx = c.ctx, f = frame(c, {l:62, r:24, t:20, b:42});
+    let lo=Infinity, hi=-Infinity;
+    for(let i=0;i<n;i++){
+      lo=Math.min(lo,y[i],pj.p[i],pb.p[i]); hi=Math.max(hi,y[i],pj.p[i],pb.p[i]);
+    }
+    const pad = (hi-lo)*0.08 || 1; lo-=pad; hi+=pad;
+    const ys = yAxis(c, f, lo, hi, {label:'predicted margin', ticks:4});
+    const xs = v => f.x0 + (v-lo)/(hi-lo)*f.w;
+    // identity
+    line(ctx, xs(lo), ys(lo), xs(hi), ys(hi), C.vaxis, 1.5, [5,4]);
+    txt(ctx, 'perfect prediction', xs(hi)-6, ys(hi)+14, {size:10, color:C.ink3, align:'right'});
+    for(let i=0;i<n;i++){
+      ctx.globalAlpha = .5;
+      ctx.fillStyle = C.vmute; ctx.beginPath(); ctx.arc(xs(y[i]), ys(pb.p[i]), 2.1, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = C.v1;    ctx.beginPath(); ctx.arc(xs(y[i]), ys(pj.p[i]), 2.4, 0, 6.2832); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    // x ticks
+    const stp = niceStep((hi-lo)/4), ffx = tickFmt(stp);
+    for(let v=Math.ceil(lo/stp)*stp; v<=hi; v+=stp)
+      txt(ctx, ffx(v), xs(v), f.y1+15, {size:10.5, font:MONO, color:C.ink3, align:'center', baseline:'top'});
+    txt(ctx, 'true margin g(h)', (f.x0+f.x1)/2, f.y1+31, {size:10.5, color:C.ink3, align:'center', baseline:'top'});
+    txt(ctx, 'average gradient J', f.x0+10, f.y0+8, {size:11, color:C.v1, baseline:'top', weight:'650'});
+    txt(ctx, 'fitted OLS β', f.x0+10, f.y0+24, {size:11, color:C.vmute, baseline:'top', weight:'650'});
+    last = {n, cos, r2j:pj.r2, r2b:pb.r2};
+  }
+
+  const redraw = debounce(draw, 30);
+  Object.values(els).forEach(el => el.addEventListener('input', redraw));
+  document.getElementById('st-reseed').addEventListener('click', () => { seed = (seed*7919+13)>>>0; draw(); });
+  document.getElementById('st-gauss').addEventListener('click', () => { els.tail.value = 0; draw(); });
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   05 — what n_fit actually buys
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('fit-canvas'); if(!c) return;
+  const nEl = document.getElementById('fit-n'), sh = document.getElementById('fit-shuf');
+  const PER = 49, NC = 231;
+
+  function draw(){
+    const rows = +nEl.value, shuf = sh.checked;
+    document.getElementById('fit-n-v').textContent = rows;
+    const rng = mulberry32(99);
+    const order = Array.from({length: NC*PER}, (_, i) => i);
+    if(shuf) for(let i=order.length-1;i>0;i--){ const j=Math.floor(rng()*(i+1)); [order[i],order[j]]=[order[j],order[i]]; }
+    const hit = new Set();
+    for(let i=0;i<Math.min(rows, order.length);i++) hit.add(Math.floor(order[i]/PER));
+
+    setText('fit-rows', String(rows));
+    setText('fit-q', String(hit.size));
+    setText('fit-pct', (hit.size/NC*100).toFixed(1) + '%');
+    setText('fit-ship', '6 questions');
+
+    clear(c);
+    const ctx = c.ctx, cols = 33, rws = Math.ceil(NC/cols);
+    const cw = Math.floor((c.W - 90)/cols), chh = Math.min(14, Math.floor((c.H - 74)/rws));
+    const ox = 46, oy = 34;
+    txt(ctx, 'each cell is one evaluation cluster — one image, one finding, 49 phrasings',
+        ox, 16, {size:10.5, color:C.ink3});
+    for(let i=0;i<NC;i++){
+      const x = ox + (i%cols)*cw, y = oy + Math.floor(i/cols)*chh;
+      rect(ctx, x, y, cw-2, chh-2, hit.has(i) ? C.v1 : C.sunk);
+      if(!hit.has(i)){ ctx.strokeStyle=C.vgrid; ctx.lineWidth=1; ctx.strokeRect(x+.5, y+.5, cw-3, chh-3); }
+    }
+    const yb = oy + rws*chh + 16;
+    txt(ctx, `${hit.size} of ${NC} clusters touched by ${rows} rows`, ox, yb,
+        {size:11.5, color:C.ink, weight:'650'});
+    txt(ctx, shuf ? 'shuffle=True — rows land in different clusters'
+                  : 'no shuffle — rows are consecutive, so they pile into the first few clusters',
+        ox, yb + 17, {size:10.5, color: shuf ? C.ok : C.warn});
+  }
+  [nEl, sh].forEach(el => el.addEventListener('input', draw));
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   06 — one cluster, 49 phrasings
+   ========================================================================== */
+const PHRASINGS = (function(){
+  const F = 'pleural effusion';
+  const bank = {
+    lexical_substitution: ["is there evidence of {f}?","is there radiographic evidence of {f}?","are there signs of {f}?","are there findings of {f}?","is there an indication of {f}?","does this radiograph demonstrate {f}?","does this film reveal {f}?","are there features of {f}?","is {f} demonstrated?","is {f} apparent?","does this examination show {f}?","is there anything suggesting {f}?"],
+    syntactic_restructuring: ["can {f} be identified?","does the image show {f}?","is {f} seen?","do you see {f}?","can you identify {f}?","has {f} been identified?","would you report {f}?","is it correct that {f} is present?","{f} is present, correct?","am i seeing {f} here?","is what we see {f}?","could this be {f}?"],
+    scope_quantification: ["is there any {f}?","is there any sign of {f}?","is there any evidence of {f}?","is there some {f}?","is any degree of {f} present?","is there definite {f}?","is there clear {f}?","is there at least some {f}?","is there obvious {f}?","is there frank {f}?","is even mild {f} present?","is there a suggestion of {f}?"],
+    specificity_modulation: ["is {f} visible on this chest radiograph?","is {f} present on this study?","is {f} noted on this examination?","is {f} observed in this image?","is {f} present on the current film?","on this chest x-ray, is {f} present?","radiographically, is {f} present?","in your assessment, is {f} present?","is {f} evident on this frontal chest radiograph?","is {f} detected on imaging?","looking at this picture, is {f} there?","anything like {f} on here?"]
+  };
+  const out = [{text:`is there ${F}?`, phen:'original'}];
+  Object.keys(bank).forEach(p => bank[p].forEach(t => out.push({text:t.replace('{f}', F), phen:p})));
+  return out;   // 1 + 48 = 49
+})();
+
+(function(){
+  const c = mkCanvas('cl-canvas'); if(!c) return;
+  const run = document.getElementById('cl-run'), kind = document.getElementById('cl-kind');
+  const bias = document.getElementById('cl-bias'), sd = document.getElementById('cl-seed');
+  const list = document.getElementById('cl-list');
+
+  function compute(){
+    const R = RUNS[run.value];
+    const div = kind.value === 'flip' ? R.divFlip : R.divStable;
+    /* the bias is in units of the FLIPPING cluster's L0 spread for both cluster types, so
+       switching type holds the question's distance to the boundary fixed and varies only the
+       spread — which is the contrast the experiment actually measures. */
+    const scale = R.divFlip[0];
+    const mean = +bias.value/100 * scale;
+    const rng = mulberry32(+sd.value*7717 + (run.value==='probe'?1:2) + (kind.value==='flip'?10:20));
+    const gauss = mkGauss(rng);
+    const z = PHRASINGS.map(() => gauss());
+    const jit = PHRASINGS.map(() => div.map(() => gauss()));
+    const traces = PHRASINGS.map((p, i) =>
+      div.map((s, L) => mean + s*(z[i]*0.94 + jit[i][L]*0.34)/Math.sqrt(0.94*0.94+0.34*0.34)));
+    return {R, div, mean, traces, scale};
+  }
+
+  function draw(){
+    const {R, div, mean, traces, scale} = compute();
+    document.getElementById('cl-bias-v').textContent = (mean>=0?'+':'') + mean.toFixed(2);
+    document.getElementById('cl-seed-v').textContent = sd.value;
+
+    const finals = traces.map(t => t[t.length-1]);
+    const yes = finals.filter(v => v > 0).length;
+    const flipped = yes !== 0 && yes !== finals.length;
+
+    setText('cl-sd', fmt(div[0], 3));
+    setText('cl-mean', (mean>=0?'+':'') + mean.toFixed(3));
+    setText('cl-ratio', Math.abs(mean) < 1e-9 ? '∞' : fmt(div[0]/Math.abs(mean), 2));
+    setText('cl-split', `${yes} / ${finals.length - yes}`);
+    const fl = document.getElementById('cl-flip');
+    fl.textContent = flipped ? 'FLIPS' : 'unanimous';
+    fl.className = 'val ' + (flipped ? 'w' : '');
+
+    clear(c);
+    const ctx = c.ctx, f = frame(c, {l:66, r:120, t:22, b:44});
+    let lo = Infinity, hi = -Infinity;
+    traces.forEach(t => t.forEach(v => { lo=Math.min(lo,v); hi=Math.max(hi,v); }));
+    const sp = Math.max(hi-lo, scale*0.4) * 0.12;
+    lo = Math.min(lo, 0) - sp; hi = Math.max(hi, 0) + sp;
+    const ys = yAxis(c, f, lo, hi, {label:'lens margin  m̂', ticks:5});
+    const xs = xLayers(c, f, div.length, 'decoder layer');
+
+    // the boundary
+    const y0 = ys(0);
+    line(ctx, f.x0, y0, f.x1, y0, C.ink3, 1.5, [6,4]);
+    txt(ctx, 'margin = 0', f.x1+6, y0, {size:10.5, color:C.ink3, baseline:'middle'});
+    txt(ctx, 'yes', f.x1+6, y0-15, {size:10, color:C.v1, baseline:'middle', weight:'650'});
+    txt(ctx, 'no',  f.x1+6, y0+15, {size:10, color:C.v2, baseline:'middle', weight:'650'});
+
+    traces.forEach((t, i) => {
+      ctx.globalAlpha = .34;
+      polyline(ctx, t.map((v,L)=>[xs(L), ys(v)]), finals[i] > 0 ? C.v1 : C.v2, 1.2);
+      ctx.globalAlpha = 1;
+    });
+    // the cluster mean
+    const meanTrace = div.map((_, L) => traces.reduce((a,t)=>a+t[L],0)/traces.length);
+    polyline(ctx, meanTrace.map((v,L)=>[xs(L), ys(v)]), C.ink, 2.4);
+    meanTrace.forEach((v,L)=> dot(ctx, xs(L), ys(v), 3.5, C.ink, C.sunk));
+    txt(ctx, 'cluster mean', xs(div.length-1)+6, ys(meanTrace[meanTrace.length-1]) - 14,
+        {size:10.5, color:C.ink, weight:'650'});
+
+    // the spread bracket at L0
+    const bx = xs(0) + 13;
+    const top = ys(mean + div[0]), bot = ys(mean - div[0]);
+    line(ctx, bx, top, bx, bot, C.amber, 2);
+    line(ctx, bx-4, top, bx+4, top, C.amber, 2);
+    line(ctx, bx-4, bot, bx+4, bot, C.amber, 2);
+    txt(ctx, '±1 sd', bx+7, (top+bot)/2, {size:10, color:C.amber, baseline:'middle', weight:'650'});
+
+    // the phrasing list
+    list.textContent = '';
+    const order = finals.map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);
+    order.forEach(([v, i], k) => {
+      const row = document.createElement('div');
+      row.className = 'phr-row' + (k%2 ? ' odd' : '');
+      const q = document.createElement('span'); q.className='q'; q.textContent = PHRASINGS[i].text;
+      const m = document.createElement('span'); m.className='m'; m.textContent = (v>=0?'+':'') + v.toFixed(3);
+      const a = document.createElement('span'); a.className='a ' + (v>0?'yes':'no'); a.textContent = v>0?'yes':'no';
+      row.append(q, m, a); list.appendChild(row);
+    });
+  }
+  [run, kind, bias, sd].forEach(el => el.addEventListener('input', draw));
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   07 — the measured divergence
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('dv-canvas'); if(!c) return;
+  let mode = 'abs';
+  const both = document.getElementById('dv-both');
+  const chips = Array.from(document.querySelectorAll('[data-dv]'));
+
+  const FOOT = {
+    abs: 'Absolute divergence is std(J·h), so it scales with ‖J‖ — comparable within a run, not across runs. The probe sits near 2.0 and the scaled model near 0.045; that factor of 45 says nothing about robustness. This is caveat 8.',
+    ratio: 'The ratio is scale-free and is what the README quotes. Probe: 8.87× at L0, never below 8.57×. Scaled: 2.23× at L0, then 1.95–2.02× — which is why the > 2× commit rule is one decimal from returning None on that model.',
+    pb: "Point-biserial between a cluster's lens-margin spread and whether it flipped. Both runs fall monotonically with depth, which is the opposite of what a circularity artifact would produce — the most predictive layer is the one furthest from the readout."
+  };
+
+  function series(){
+    const out = [];
+    const add = (R, key, mute) => {
+      if(mode === 'abs') out.push({v:R.divFlip, c: mute?C.vmute:C.v1, lab:key+' flip', dash:mute},
+                                  {v:R.divStable, c: mute?C.vmute:C.v2, lab:key+' stable', dash:mute});
+      else if(mode === 'ratio') out.push({v:R.ratio, c: mute?C.vmute:C.v1, lab:key+' ratio', dash:mute});
+      else out.push({v:R.pb, c: mute?C.vmute:C.v1, lab:key+' point-biserial', dash:mute});
+    };
+    add(RUNS.probe, 'probe', false);
+    if(both.checked) add(RUNS.scaled, 'scaled', true);
+    return out;
+  }
+
+  function draw(){
+    clear(c);
+    const S = series(), ctx = c.ctx;
+    const f = frame(c, {l:70, r:130, t:22, b:44});
+    let hi = 0; S.forEach(s => s.v.forEach(v => hi = Math.max(hi, v)));
+    let lo = 0;
+    if(mode === 'ratio'){ lo = 0; hi = Math.max(hi, 10); }
+    if(mode === 'pb'){ lo = 0; hi = 1; }
+    const nm = niceMax(hi, 5);
+    const ys = yAxis(c, f, lo, mode==='pb' ? 1 : nm.max,
+      {label: mode==='abs' ? 'within-cluster lens-margin divergence'
+            : mode==='ratio' ? 'flip ÷ stable divergence' : 'point-biserial with flip', ticks:5});
+    const xs = xLayers(c, f, 6, 'decoder layer');
+    if(mode === 'ratio'){
+      const y2 = ys(2);
+      line(ctx, f.x0, y2, f.x1, y2, C.warn, 1.5, [5,4]);
+      txt(ctx, 'the 2× commit threshold', f.x0+8, y2+16, {size:10.5, color:C.warn});
+    }
+    const labels = [];
+    S.forEach(s => {
+      const pts = s.v.map((v,L)=>[xs(L), ys(v)]);
+      ctx.save();
+      if(s.dash) ctx.setLineDash([5,4]);
+      polyline(ctx, pts, s.c, s.dash ? 1.8 : 2.4);
+      ctx.restore();
+      pts.forEach(p => dot(ctx, p[0], p[1], s.dash?3:4, s.c, C.sunk));
+      labels.push({y: pts[5][1], y0: pts[5][1], lab: s.lab, c: s.c});
+    });
+    /* the two scaled series sit on top of each other in absolute mode, so nudge the
+       labels apart and draw a leader when one has moved off its line */
+    labels.sort((a,b)=>a.y-b.y);
+    const GAPY = 13;
+    for(let i=1;i<labels.length;i++)
+      if(labels[i].y - labels[i-1].y < GAPY) labels[i].y = labels[i-1].y + GAPY;
+    labels.forEach(L2 => {
+      if(Math.abs(L2.y - L2.y0) > 1.5)
+        line(ctx, f.x1+2, L2.y0, f.x1+6, L2.y, L2.c, 1);
+      txt(ctx, L2.lab, f.x1+8, L2.y, {size:10.5, color:L2.c, baseline:'middle', weight:'650'});
+    });
+    document.getElementById('dv-foot').textContent = FOOT[mode];
+    const lg = document.getElementById('dv-legend');
+    lg.textContent = '';
+    const seen = new Set();
+    S.forEach(s2 => {
+      const key = s2.c + '|' + (s2.dash ? 'd' : 's');
+      if(seen.has(key)) return; seen.add(key);
+      const sp = document.createElement('span');
+      const i = document.createElement('i'); i.style.background = s2.c;
+      if(s2.dash) i.style.opacity = '.75';
+      sp.append(i, document.createTextNode(s2.lab + (s2.dash ? ' (dashed)' : '')));
+      lg.appendChild(sp);
+    });
+  }
+
+  chips.forEach(ch => ch.addEventListener('click', () => {
+    mode = ch.dataset.dv;
+    chips.forEach(o => o.setAttribute('aria-pressed', String(o === ch)));
+    draw(); tbl.refresh();
+  }));
+  both.addEventListener('change', () => { draw(); tbl.refresh(); });
+
+  const tbl = attachTable('p-div', 'Per-layer values, both runs, read from the result JSONs.', () => {
+    const cols = ['Layer','probe flip','probe stable','probe ratio','probe r','scaled flip','scaled stable','scaled ratio','scaled r'];
+    const P = RUNS.probe, T = RUNS.scaled;
+    const rows = [];
+    for(let L=0;L<6;L++) rows.push(['L'+L, P.divFlip[L].toFixed(3), P.divStable[L].toFixed(3),
+      P.ratio[L].toFixed(2), P.pb[L].toFixed(3), T.divFlip[L].toFixed(4), T.divStable[L].toFixed(4),
+      T.ratio[L].toFixed(2), T.pb[L].toFixed(3)]);
+    return {cols, rows};
+  });
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   08 — lens against patch
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('pt-canvas'); if(!c) return;
+  let which = 'probe';
+  const chips = Array.from(document.querySelectorAll('[data-pr]'));
+
+  function draw(){
+    clear(c);
+    const R = RUNS[which], P = R.patch, ctx = c.ctx;
+    const f = frame(c, {l:70, r:150, t:22, b:44});
+    const ys = yAxis(c, f, 0, 1, {label:'rank-1 recovery rate', ticks:5});
+    const xs = xLayers(c, f, 6, 'decoder layer');
+
+    // the lens ratio, rescaled onto the same frame so the shapes can be compared
+    const rmax = Math.max(...R.ratio);
+    const lensY = R.ratio.map(v => v/rmax);
+    ctx.save(); ctx.setLineDash([5,4]);
+    polyline(ctx, lensY.map((v,L)=>[xs(L), ys(v)]), C.vmute, 1.8);
+    ctx.restore();
+    lensY.forEach((v,L)=> dot(ctx, xs(L), ys(v), 3, C.vmute, C.sunk));
+
+    polyline(ctx, P.rec.map((v,L)=>[xs(L), ys(v)]), C.v1, 2.6);
+    P.rec.forEach((v,L)=> dot(ctx, xs(L), ys(v), 4.5, C.v1, C.sunk));
+    polyline(ctx, P.ctl.map((v,L)=>[xs(L), ys(v)]), C.v2, 2.2);
+    P.ctl.forEach((v,L)=> dot(ctx, xs(L), ys(v), 3.5, C.v2, C.sunk));
+
+    txt(ctx, 'rank-1 recovery', f.x1+8, ys(P.rec[5]), {size:10.5, color:C.v1, baseline:'middle', weight:'650'});
+    txt(ctx, 'random control', f.x1+8, ys(P.ctl[5])+12, {size:10.5, color:C.v2, baseline:'middle', weight:'650'});
+    txt(ctx, 'lens ratio', f.x1+8, ys(lensY[5]), {size:10.5, color:C.vmute, baseline:'middle', weight:'650'});
+    txt(ctx, '(rescaled)', f.x1+8, ys(lensY[5])+12, {size:9.5, color:C.ink3, baseline:'middle'});
+
+    // the layer-5 annotation
+    const x5 = xs(5), y5 = ys(P.rec[5]);
+    line(ctx, x5, ys(1), x5, y5, C.warn, 1.5, [3,3]);
+    txt(ctx, 'should be 1.000', x5-8, (ys(1)+y5)/2 - 8, {size:10.5, color:C.warn, align:'right', weight:'650'});
+    txt(ctx, 'see caveat 2', x5-8, (ys(1)+y5)/2 + 6, {size:10, color:C.ink3, align:'right'});
+
+    document.getElementById('pt-foot').textContent =
+      `${R.label}. Rank-1 recovery from ${P.source} (${P.nTargets} flip targets), lens ratio from ${R.file}. ` +
+      `Recovery is at ceiling for layers 0–4 against a random-direction control at ` +
+      `${(Math.max(...P.ctl)*100).toFixed(0)}% or below, so neither curve localises a layer — what they ` +
+      `jointly establish is that a single direction at the answer position carries the decision, already at layer 0.`;
+  }
+  chips.forEach(ch => ch.addEventListener('click', () => {
+    which = ch.dataset.pr;
+    chips.forEach(o => o.setAttribute('aria-pressed', String(o === ch)));
+    draw(); tbl.refresh();
+  }));
+  const tbl = attachTable('p-patch', 'Rank-1 patching against the lens, per layer.', () => {
+    const R = RUNS[which], P = R.patch;
+    const rows = [];
+    for(let L=0;L<6;L++) rows.push(['L'+L, P.rec[L].toFixed(3), P.ctl[L].toFixed(3),
+      P.net[L].toFixed(3), R.ratio[L].toFixed(2), R.pb[L].toFixed(3)]);
+    return {cols:['Layer','recovery','random control','net','lens ratio','lens r'], rows};
+  });
+  onTheme(draw); draw();
+})();
+</script>

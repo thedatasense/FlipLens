@@ -207,16 +207,30 @@ each are worked through interactively in
 [`docs/sae_explainer.html`](docs/sae_explainer.html).
 
 **A Jacobian lens (`jlens.py`)** reads the yes/no margin each layer is disposed to
-produce (the average input-output Jacobian). For two phrasings of one question the
-readouts track together early, then commit to opposite answers.
+produce — the average input-output Jacobian, differentiated through the remaining
+layers rather than assuming them away.
 
-![What the Jacobian lens shows](figures/jlens_concept.png)
+![The idea behind the Jacobian lens, drawn schematically](figures/jlens_concept.png)
 
-Across paraphrases, flipping clusters diverge about **8.9x** more than stable ones,
-from layer 0, with a divergence-vs-flip correlation of **0.81**. A lens and a
-causal patch, with different assumptions, place the flip in the same early layers.
+*The figure above is a schematic of the idea, not plotted data.* The measurement
+below is the result, and its shape differs: the phrasings never track together.
+
+On the retired 1,841-question probe (`results_gemma/jlens_gemma/`, 231 clusters),
+flipping clusters' lens margins diverge **8.9x** more than stable ones, already at
+layer 0 and flat across all six layers, with a divergence-vs-flip correlation of
+**0.81**. On the scaled grounded model (`results_transfer/jlens/`, 1,500 clusters)
+the same statistics are **2.2x** and **0.26**. The lens and the rank-1 causal patch
+agree that the flip is decided at or before the first decoder layer, but neither
+localises it further: both sit at their ceiling from layer 0 onward.
 
 ![The lens splits flipping from stable paraphrases](figures/jlens_divergence.png)
+
+The lens is the first-order approximation of that same patch, not an independent
+method, so their agreement is a consistency check rather than corroboration; the
+independent leg is the unsupervised SAE direction above. The method, its lineage
+from the logit and tuned lenses, and eleven implementation caveats with the fix for
+each are worked through interactively in
+[`docs/jlens_explainer.html`](docs/jlens_explainer.html).
 
 ## Why binary accuracy cannot tell a blind model from a seeing one
 
