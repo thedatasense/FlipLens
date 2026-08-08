@@ -183,13 +183,28 @@ matches the causal flip direction from C.
 
 ![What the sparse autoencoder tests](figures/sae_concept.png)
 
-An unsupervised feature aligns with the causal flip direction at |cosine| 0.74,
-clearly ahead of principal-component analysis at 0.52 and far above a random
-direction's 0.04; a distinct feature predicts flips (point-biserial 0.43). The
-flip axis is unsupervised-recoverable, not an artifact of the supervised
+On the retired 1,841-question probe (`results_gemma/sae_gemma/`, 231 paraphrase
+clusters, d = 384), an unsupervised feature aligns with the causal flip direction
+at **|cosine| 0.74**, ahead of principal-component analysis at 0.52. Both are
+*best-of-many* statistics, so the reference has to be selected the same way: the
+best of 2,048 random directions reaches 0.18 by chance (95th percentile 0.21) and
+the best of 20 reaches 0.11, against a single random direction's 0.04. Each clears
+its matched null by roughly four times. That same feature independently predicts
+flips (point-biserial 0.42, p = 2e-11); it was selected by alignment with the
+causal direction rather than by its own flip correlation, so that is one test
+rather than a search over the dictionary.
+
+On the scaled grounded model (`results_transfer/sae/`, 73,500 evaluations) the
+alignment is weaker but survives: |cosine| 0.59 against the same 0.18 null, and
+point-biserial 0.13 against a matched max-of-2,048 null of 0.09. The flip axis is
+unsupervised-recoverable on both models, not an artifact of the supervised
 difference-of-means.
 
 ![An unsupervised feature recovers the causal flip axis](figures/sae_alignment.png)
+
+The method, the corrected nulls, and eleven implementation caveats with the fix for
+each are worked through interactively in
+[`docs/sae_explainer.html`](docs/sae_explainer.html).
 
 **A Jacobian lens (`jlens.py`)** reads the yes/no margin each layer is disposed to
 produce (the average input-output Jacobian). For two phrasings of one question the

@@ -79,7 +79,7 @@ def main():
         tag = "grounded" if use_ground else "baseline"
         print(f"\n=== training {tag} (augmented, seed {SEED}) ===", flush=True)
         art = train_model(regime="augmented", seed=SEED, steps=2000, lr=5e-4,
-                          arch="gemma", use_ground=use_ground, verbose=False)
+                          use_ground=use_ground, verbose=False)
         native = art["result"]
         res = evaluate(art["model"], records, feats, pc, tok, use_ground)
         out[tag] = {"native": {k: native[k] for k in
