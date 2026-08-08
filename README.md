@@ -255,6 +255,14 @@ MedSigLIP itself pays this tax: **AUC 0.734 but accuracy 0.681** on the same tas
 **Report AUC.** Accuracy alone cannot detect whether a medical VLM is using the image,
 which is the metric the field mostly uses.
 
+The same margin also works as a single-pass detector, and it is the best one available:
+**AUC 0.974 for paraphrase flips on both held-out hospitals** (`detect_percase.json`),
+against **0.47 to 0.52** for detecting an answer that ignored the image. Flips are
+catchable in one forward pass. Blind answers are not. The detectors, the entropy filter,
+and the deployment gate that admits 33.0% at 96.8% accuracy while 93% of what it admits
+is answerable from the question text alone are worked through interactively in
+[`docs/uncertainty_and_gates_explainer.html`](docs/uncertainty_and_gates_explainer.html).
+
 The in-distribution flip-rate results are *not* affected by this. A threshold sweep
 holds the augmented < canonical ordering at every non-degenerate offset, and a
 threshold-free statistic (within-cluster margin dispersion over between-cluster
