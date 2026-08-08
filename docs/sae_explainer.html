@@ -27,6 +27,14 @@
   --warn:#98281D;
   --warn-wash:#F6E1DE;
   --ok:#1A705C;
+  /* chart marks only — the documented categorical palette, validated against this
+     page's chart surface (--sunk) in both modes via scripts/validate_palette.js.
+     slot 1 = the subject, slot 2 = the second series, mute = de-emphasis. */
+  --viz-1:#2A78D6;
+  --viz-2:#EB6834;
+  --viz-mute:#898781;
+  --viz-grid:#E1E0D9;
+  --viz-axis:#C3C2B7;
   --shadow:0 1px 2px rgba(12,20,24,.06), 0 8px 24px -12px rgba(12,20,24,.18);
   --glow:radial-gradient(120% 80% at 50% 0%, rgba(255,255,255,.9) 0%, rgba(255,255,255,0) 70%);
 
@@ -61,6 +69,16 @@
     --warn:#E88170;
     --warn-wash:#37201C;
     --ok:#4CBFA3;
+  --viz-1:#3987E5;
+  --viz-2:#D95926;
+  --viz-mute:#898781;
+  --viz-grid:#2C2C2A;
+  --viz-axis:#383835;
+    --viz-1:#3987E5;
+    --viz-2:#D95926;
+    --viz-mute:#898781;
+    --viz-grid:#2C2C2A;
+    --viz-axis:#383835;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
     --glow:radial-gradient(120% 80% at 50% 0%, rgba(120,180,215,.07) 0%, rgba(120,180,215,0) 70%);
     color-scheme:dark;
@@ -328,7 +346,36 @@ select{
 .stat .sub{font-family:var(--sans);font-size:10px;color:var(--ink-3)}
 
 canvas{display:block;max-width:100%}
-.canvas-wrap{overflow-x:auto;border-radius:4px;background:var(--sunk);border:1px solid var(--rule-soft)}
+.canvas-wrap{overflow-x:auto;overflow-y:hidden;border-radius:4px;background:var(--sunk);border:1px solid var(--rule-soft);position:relative}
+.viz-tip{
+  position:absolute;left:0;top:0;pointer-events:none;opacity:0;
+  transform:translate(-50%,calc(-100% - 10px));
+  max-width:min(320px,92%);white-space:normal;
+  background:var(--panel);border:1px solid var(--rule);border-radius:5px;
+  box-shadow:var(--shadow);padding:.4rem .6rem;font-family:var(--sans);font-size:11.5px;
+  color:var(--ink-2);white-space:nowrap;z-index:6;
+}
+.viz-tip[data-on="1"]{opacity:1}
+.viz-tip[data-below="1"]{transform:translate(-50%,12px)}
+@media (prefers-reduced-motion:no-preference){ .viz-tip{transition:opacity .09s linear} }
+.viz-tip .tt{
+  display:block;color:var(--ink-3);font-size:10px;letter-spacing:.07em;
+  text-transform:uppercase;margin-bottom:.2rem;
+}
+.viz-tip .rr{display:flex;gap:.4rem;align-items:center;line-height:1.5}
+.viz-tip .kk{width:11px;height:2px;border-radius:1px;flex:none}
+.viz-tip .vv{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);font-weight:600}
+.viz-tip .nn{color:var(--ink-3)}
+.viz-table{margin-top:.75rem}
+.viz-table[hidden]{display:none}
+.viz-table table{font-size:12px}
+.viz-toggle{
+  font-family:var(--sans);font-size:11px;font-weight:600;letter-spacing:.05em;
+  border:1px solid var(--rule);background:var(--panel-2);color:var(--ink-2);
+  border-radius:4px;padding:.22rem .55rem;cursor:pointer;
+}
+.viz-toggle:hover{border-color:var(--blue);color:var(--blue)}
+.viz-toggle[aria-expanded="true"]{background:var(--blue-wash);border-color:var(--blue);color:var(--blue)}
 .canvas-wrap canvas{margin:0 auto}
 
 /* ---------- code ---------- */
@@ -552,11 +599,10 @@ footer a{color:var(--ink-2)}
           <input type="range" id="sp-noise" min="0" max="30" step="1" value="4">
         </div>
       </div>
-      <div class="canvas-wrap"><canvas role="img" id="sp-canvas" width="1040" height="420" aria-label="Left: feature directions packed into two dimensions. Right: the activation of neuron 0, coloured by which feature caused it."></canvas></div>
+      <div class="canvas-wrap"><canvas role="img" id="sp-canvas" width="1040" height="420" aria-label="Left: feature directions packed into two dimensions, with one tracked feature highlighted and the rest de-emphasised. Right: the distribution of neuron 0's activation, split into the tracked feature and everything else."></canvas></div>
       <div class="legend">
-        <span><i style="background:var(--blue)"></i>feature directions</span>
-        <span><i style="background:var(--amber)"></i>sampled activations</span>
-        <span><i style="background:var(--grey)"></i>neuron axes</span>
+        <span><i style="background:var(--viz-1)"></i>feature 0 — the one we are tracking</span>
+        <span><i style="background:var(--viz-mute)"></i>every other feature</span>
       </div>
       <div class="stats" style="margin-top:1rem">
         <div class="stat"><span class="lbl">Features / dims</span><span class="val b" id="sp-ratio">6 / 2</span><span class="sub">overcompleteness</span></div>
@@ -565,10 +611,14 @@ footer a{color:var(--ink-2)}
       </div>
     </div>
     <div class="panel-foot">
-      Push <em>features</em> above 2 and the directions must share the plane. The histogram on the right is
-      the activation of a single neuron: once features outnumber dimensions, one neuron's firing no longer
-      identifies which feature fired — <strong>polysemanticity</strong>. A dictionary with more entries
-      than dimensions is how you undo that.
+      Push <em>features</em> above 2 and the directions must share the plane. The histogram on the right
+      splits neuron 0's activation into the one feature we are tracking and everything else: at
+      <span class="num">N = 2</span> the blue owns its own lobe, and by <span class="num">N = 10</span>
+      it is smeared under the grey across the whole range. One neuron's firing no longer identifies
+      which feature fired — <strong>polysemanticity</strong>. A dictionary with more entries than
+      dimensions is how you undo that. (One feature is highlighted and the rest are grey on purpose:
+      giving fourteen features fourteen hues would be unreadable under colour-vision deficiency, and
+      would spend the identity channel on exactly the thing this chart shows is not identifiable.)
     </div>
   </div>
 
@@ -819,6 +869,11 @@ footer a{color:var(--ink-2)}
           </label>
         </div>
       </div>
+      <div class="legend" style="margin:0 0 .7rem">
+        <span><i style="background:var(--viz-1)"></i>what the autoencoder produces — code and reconstruction</span>
+        <span><i style="background:var(--viz-2)"></i>the target: the original vector, and the gap left over</span>
+        <span><i style="background:var(--viz-mute)"></i>pre-activations the top-k discarded</span>
+      </div>
       <div class="canvas-wrap"><canvas role="img" tabindex="0" id="fw-canvas" width="1040" height="470" aria-label="The stages of a top-k sparse autoencoder forward pass: input vector, centred input, encoder pre-activations with the top k highlighted, the sparse code, and the reconstruction against the original."></canvas></div>
       <div class="stats" style="margin-top:1rem">
         <div class="stat"><span class="lbl">L0</span><span class="val b" id="fw-l0">4</span><span class="sub">non-zero code entries</span></div>
@@ -974,6 +1029,10 @@ dbPre[i]    += g[i] - Σ_j dz[j]·Wenc[j][i]</code></pre>
         <label class="switch"><input type="checkbox" id="tr-rawcmp"> score against <em>raw</em> ground truth (caveat 1)</label>
       </div>
 
+      <div class="legend" style="margin:0 0 .7rem">
+        <span><i style="background:var(--viz-1)"></i>loss · recovery · a dictionary entry that still fires</span>
+        <span><i style="background:var(--viz-mute)"></i>an entry silent for 500 steps — dead</span>
+      </div>
       <div class="canvas-wrap"><canvas role="img" id="tr-canvas" width="1040" height="330" aria-label="Live training: loss curve on the left, per-feature recovery cosines in the middle, and the activation frequency of every dictionary entry on the right."></canvas></div>
 
       <div class="stats" style="margin-top:1rem">
@@ -981,8 +1040,8 @@ dbPre[i]    += g[i] - Σ_j dz[j]·Wenc[j][i]</code></pre>
         <div class="stat"><span class="lbl">MSE</span><span class="val" id="tr-mse">—</span><span class="sub">on the batch</span></div>
         <div class="stat"><span class="lbl">Var. explained</span><span class="val b" id="tr-ve">—</span><span class="sub">600 training rows</span></div>
         <div class="stat"><span class="lbl">Held-out VE</span><span class="val" id="tr-veho">—</span><span class="sub">unseen rows</span></div>
-        <div class="stat"><span class="lbl">Dead features</span><span class="val w" id="tr-dead">—</span><span class="sub">silent for 500 steps</span></div>
-        <div class="stat"><span class="lbl">Recovery</span><span class="val a" id="tr-rec">—</span><span class="sub">mean max |cos| true→learned</span></div>
+        <div class="stat"><span class="lbl">Dead features</span><span class="val" id="tr-dead">—</span><span class="sub">silent for 500 steps</span></div>
+        <div class="stat"><span class="lbl">Recovery</span><span class="val b" id="tr-rec">—</span><span class="sub">mean max |cos| true→learned</span></div>
         <div class="stat"><span class="lbl">Precision</span><span class="val" id="tr-prec">—</span><span class="sub">mean max |cos| learned→true</span></div>
       </div>
     </div>
@@ -1046,17 +1105,19 @@ dbPre[i]    += g[i] - Σ_j dz[j]·Wenc[j][i]</code></pre>
           trains one SAE per k ∈ {1, 2, 3, 4, 6, 8, 12, 16, 24}, 900 steps each, on the panel-04 data
         </span>
       </div>
-      <div class="canvas-wrap"><canvas role="img" id="fr-canvas" width="1040" height="360" aria-label="Pareto frontier: fraction of variance unexplained against L0, for a family of top-k sparse autoencoders, with feature-recovery quality shown alongside."></canvas></div>
+      <div class="canvas-wrap"><canvas role="img" id="fr-canvas" width="1040" height="430" aria-label="Two stacked panels sharing an L0 axis. Upper: fraction of variance unexplained falls monotonically as k rises. Lower: recovery of the ground-truth dictionary peaks near the data's true sparsity and then declines."></canvas></div>
       <div class="legend">
-        <span><i style="background:var(--blue)"></i>fraction of variance unexplained (held out)</span>
-        <span><i style="background:var(--amber)"></i>ground-truth recovery</span>
+        <span><i style="background:var(--viz-1)"></i>upper panel — variance unexplained</span>
+        <span><i style="background:var(--viz-2)"></i>lower panel — ground-truth recovery</span>
       </div>
     </div>
     <div class="panel-foot">
-      The two curves do not peak in the same place. Reconstruction improves monotonically with
-      <span class="num">k</span>; recovery of the true dictionary peaks near the data's real sparsity
-      and then declines. If you pick <span class="num">k</span> by reconstruction alone you will
-      systematically pick one that is too large.
+      The two measures live on different scales, so they get a panel each rather than two
+      y-axes on one plot — an alignment of two scales would invent a relationship the data does
+      not contain. Read them against the shared <span class="num">k</span> axis: reconstruction
+      improves monotonically, while recovery of the true dictionary peaks near the data's real
+      sparsity and then declines. Pick <span class="num">k</span> by reconstruction alone and you
+      will systematically pick one that is too large.
     </div>
   </div>
 
@@ -1184,6 +1245,10 @@ dbPre[i]    += g[i] - Σ_j dz[j]·Wenc[j][i]</code></pre>
           left: one draw. right: the sampling distribution of r over 2000 draws.
         </span>
       </div>
+      <div class="legend" style="margin:0 0 .7rem">
+        <span><i style="background:var(--viz-1)"></i>clusters that flipped · r with a real effect</span>
+        <span><i style="background:var(--viz-mute)"></i>stable clusters · best of m pure-noise features</span>
+      </div>
       <div class="canvas-wrap"><canvas role="img" id="pb-canvas" width="1040" height="330" aria-label="Left: per-cluster feature activation for flipped and stable clusters. Right: the sampling distribution of the point-biserial correlation, and how selecting the maximum over many features shifts it."></canvas></div>
       <div class="stats" style="margin-top:1rem">
         <div class="stat"><span class="lbl">This draw's r</span><span class="val b" id="pb-r">—</span><span class="sub">point-biserial</span></div>
@@ -1282,7 +1347,7 @@ dbPre[i]    += g[i] - Σ_j dz[j]·Wenc[j][i]</code></pre>
           <input type="range" id="nl-trials" min="2000" max="60000" step="2000" value="20000">
         </div>
       </div>
-      <div class="canvas-wrap"><canvas role="img" id="nl-canvas" width="1040" height="340" aria-label="The Monte Carlo distribution of the maximum absolute cosine between a fixed direction and m random directions in d dimensions, with the three observed FlipLens values marked."></canvas></div>
+      <div class="canvas-wrap"><canvas role="img" id="nl-canvas" width="1040" height="340" aria-label="The Monte Carlo distribution of the maximum absolute cosine between a fixed direction and m random directions in d dimensions, with the two observed FlipLens values and the 95th-percentile threshold marked."></canvas></div>
       <div class="stats" style="margin-top:1rem">
         <div class="stat"><span class="lbl">Null mean</span><span class="val" id="nl-mean">—</span><span class="sub">E[max |cos|]</span></div>
         <div class="stat"><span class="lbl">Null 95th pct</span><span class="val" id="nl-p95">—</span><span class="sub">one-sided 0.05</span></div>
@@ -1290,9 +1355,9 @@ dbPre[i]    += g[i] - Σ_j dz[j]·Wenc[j][i]</code></pre>
         <div class="stat"><span class="lbl">Asymptotic</span><span class="val" id="nl-asym">—</span><span class="sub">√(2 ln 2m / d)</span></div>
       </div>
       <div class="legend">
-        <span><i style="background:var(--grey)"></i>null distribution of max |cos|</span>
-        <span><i style="background:var(--blue)"></i>SAE 0.737</span>
-        <span><i style="background:var(--amber)"></i>PCA 0.519</span>
+        <span><i style="background:var(--viz-mute)"></i>null distribution of max |cos|</span>
+        <span><i style="background:var(--viz-1)"></i>observed — SAE 0.737</span>
+        <span><i style="background:var(--viz-2)"></i>observed — PCA 0.519</span>
       </div>
     </div>
     <div class="panel-foot">
@@ -1720,7 +1785,10 @@ function themeColors(){
     blue:g('blue'), blue2:g('blue-2'), amber:g('amber'), amber2:g('amber-2'),
     grey:g('grey'), rule:g('rule'), ruleSoft:g('rule-soft'),
     panel:g('panel'), panel2:g('panel-2'), sunk:g('sunk'),
-    warn:g('warn'), ok:g('ok'), blueWash:g('blue-wash'), amberWash:g('amber-wash')
+    warn:g('warn'), ok:g('ok'), blueWash:g('blue-wash'), amberWash:g('amber-wash'),
+    /* chart marks — validated categorical slots, de-emphasis, and chrome */
+    v1:g('viz-1'), v2:g('viz-2'), vmute:g('viz-mute'),
+    vgrid:g('viz-grid'), vaxis:g('viz-axis')
   };
 }
 let C = themeColors();
@@ -1780,6 +1848,203 @@ function line(ctx,x1,y1,x2,y2,color,w=1,dash=null){
 }
 function rect(ctx,x,y,w,h,color){ ctx.fillStyle=color; ctx.fillRect(x,y,w,h); }
 function fmt(v,n=3){ return (v===null||v===undefined||!isFinite(v)) ? '—' : v.toFixed(n); }
+
+/* Axis ticks round to clean numbers — a raw data maximum divided by four gives
+   0.649 / 0.487 / 0.325, which nobody reads. */
+function niceStep(raw){
+  if(!(raw > 0)) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw/mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+}
+function niceMax(v, n){
+  const step = niceStep(v/n);
+  return {max: step*n, step};
+}
+function tickList(max, n){
+  const step = niceStep(max/n), out = [];
+  for(let v = 0; v <= max + step*1e-6; v += step) out.push(v);
+  return out;
+}
+function tickFmt(step){
+  let d = 0;
+  while(d < 4 && Math.abs(step*Math.pow(10,d) - Math.round(step*Math.pow(10,d))) > 1e-9) d++;
+  return v => v.toFixed(d);
+}
+
+/* ---- mark specs -------------------------------------------------------
+   A bar grows from the baseline with a 4px rounded data-end and a square
+   foot. Below ~5px of width or height the radius is dropped rather than
+   deforming the mark. Adjacent bars are separated by a 2px surface gap,
+   never by a stroke. */
+const GAP = 2;                       // the surface gap, one consistent width
+function barUp(ctx, x, w, yTop, yBase, color, r){
+  const h = yBase - yTop;
+  if(h <= 0 || w <= 0) return;
+  ctx.fillStyle = color;
+  const rad = Math.min(r === undefined ? 4 : r, w/2, h);
+  if(rad < 1.5 || w < 5){ ctx.fillRect(x, yTop, w, h); return; }
+  ctx.beginPath();
+  ctx.moveTo(x, yBase);
+  ctx.lineTo(x, yTop + rad);
+  ctx.arcTo(x, yTop, x + rad, yTop, rad);
+  ctx.lineTo(x + w - rad, yTop);
+  ctx.arcTo(x + w, yTop, x + w, yTop + rad, rad);
+  ctx.lineTo(x + w, yBase);
+  ctx.closePath(); ctx.fill();
+}
+function barDn(ctx, x, w, yBase, yBot, color, r){
+  const h = yBot - yBase;
+  if(h <= 0 || w <= 0) return;
+  ctx.fillStyle = color;
+  const rad = Math.min(r === undefined ? 4 : r, w/2, h);
+  if(rad < 1.5 || w < 5){ ctx.fillRect(x, yBase, w, h); return; }
+  ctx.beginPath();
+  ctx.moveTo(x, yBase);
+  ctx.lineTo(x, yBot - rad);
+  ctx.arcTo(x, yBot, x + rad, yBot, rad);
+  ctx.lineTo(x + w - rad, yBot);
+  ctx.arcTo(x + w, yBot, x + w, yBot - rad, rad);
+  ctx.lineTo(x + w, yBase);
+  ctx.closePath(); ctx.fill();
+}
+/* a dot with the 2px surface ring, so it stays legible over a line */
+function dot(ctx, x, y, rr, color, ring){
+  ctx.save();
+  ctx.beginPath(); ctx.arc(x, y, rr + 2, 0, 6.2832);
+  ctx.fillStyle = ring || C.sunk; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, rr, 0, 6.2832);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.restore();
+}
+/* solid hairline gridline, one step off the surface — never dashed */
+function grid(ctx, x1, y1, x2, y2){ line(ctx, x1, y1, x2, y2, C.vgrid, 1); }
+
+/* ---- the hover layer --------------------------------------------------
+   Tooltips enhance, never gate: every value here is also in a stat tile,
+   a direct label, or the table view. Keyboard focus shows the same rows. */
+function attachTip(c, hitTest){
+  const wrap = c.cv.parentElement;
+  const tip = document.createElement('div');
+  tip.className = 'viz-tip';
+  tip.setAttribute('role','status');
+  tip.setAttribute('aria-live','polite');
+  wrap.appendChild(tip);
+  let shown = false;
+  function place(hit, cx, cy){
+    if(!hit){ if(shown){ tip.dataset.on = '0'; tip.textContent = ''; shown = false; } return; }
+    tip.textContent = '';
+    const t = document.createElement('span');
+    t.className = 'tt'; t.textContent = hit.title;
+    tip.appendChild(t);
+    (hit.rows || []).forEach(r => {
+      const row = document.createElement('span');
+      row.className = 'rr';
+      if(r.color){
+        const k = document.createElement('span');
+        k.className = 'kk'; k.style.background = r.color;
+        row.appendChild(k);
+      }
+      const v = document.createElement('span');
+      v.className = 'vv'; v.textContent = r.value;          // values lead
+      row.appendChild(v);
+      if(r.label){
+        const n = document.createElement('span');
+        n.className = 'nn'; n.textContent = r.label;         // labels follow
+        row.appendChild(n);
+      }
+      tip.appendChild(row);
+    });
+    const sx = c.cv.offsetWidth / c.W, sy = c.cv.offsetHeight / c.H;
+    const px0 = (hit.x !== undefined ? hit.x : cx) * sx;
+    const py0 = (hit.y !== undefined ? hit.y : cy) * sy;
+    // measure once visible, then keep the whole tooltip inside the plot: flip
+    // below the point when there is no room above, and clamp horizontally.
+    tip.dataset.on = '1'; shown = true;
+    tip.dataset.below = '0';
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    const below = py0 - h - 10 < 0;
+    tip.dataset.below = below ? '1' : '0';
+    const maxX = c.cv.offsetWidth - w/2 - 2;
+    tip.style.left = Math.max(w/2 + 2, Math.min(maxX, px0)) + 'px';
+    const maxY = c.cv.offsetHeight - (below ? h + 12 : 0) - 2;
+    tip.style.top = Math.max(below ? 2 : h + 12, Math.min(maxY, py0)) + 'px';
+  }
+  function toLocal(ev){
+    const r = c.cv.getBoundingClientRect();
+    return [ (ev.clientX - r.left) * (c.W / r.width), (ev.clientY - r.top) * (c.H / r.height) ];
+  }
+  c.cv.addEventListener('pointermove', ev => {
+    const [x,y] = toLocal(ev);
+    place(hitTest(x,y), x, y);
+  });
+  c.cv.addEventListener('pointerleave', () => place(null));
+  c.cv.addEventListener('blur', () => place(null));
+  return {show:place, hide:()=>place(null)};
+}
+
+/* ---- the table-view twin ----------------------------------------------
+   Every chart that carries values a reader might need has one. It is also
+   the relief channel for the sub-3:1 light-mode orange. */
+function attachTable(panelId, caption, build){
+  const panel = document.getElementById(panelId);
+  if(!panel) return {refresh(){}};
+  const body = panel.querySelector('.panel-body');
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;justify-content:flex-end;margin-top:.75rem';
+  const btn = document.createElement('button');
+  btn.className = 'viz-toggle';
+  btn.setAttribute('aria-expanded','false');
+  btn.textContent = 'Table view';
+  const holder = document.createElement('div');
+  holder.className = 'viz-table tbl-wrap';
+  holder.hidden = true;
+  const tblId = panelId + '-table';
+  holder.id = tblId;
+  btn.setAttribute('aria-controls', tblId);
+  row.appendChild(btn);
+  body.appendChild(row); body.appendChild(holder);
+  function render(){
+    if(holder.hidden) return;
+    const d = build();
+    holder.textContent = '';
+    const t = document.createElement('table');
+    const cap = document.createElement('caption');
+    cap.style.cssText = 'caption-side:top;text-align:left;font-family:'+SANS_A
+      + ';font-size:11px;color:var(--ink-3);padding:.4rem .7rem';
+    cap.textContent = caption;
+    t.appendChild(cap);
+    const thead = document.createElement('thead'), htr = document.createElement('tr');
+    d.cols.forEach((cname,i) => {
+      const th = document.createElement('th');
+      th.textContent = cname;
+      th.scope = 'col';
+      if(i) th.className = 'n';
+      htr.appendChild(th);
+    });
+    thead.appendChild(htr); t.appendChild(thead);
+    const tb = document.createElement('tbody');
+    d.rows.forEach(r => {
+      const tr = document.createElement('tr');
+      r.forEach((cell,i) => {
+        const td = document.createElement(i ? 'td' : 'th');
+        if(!i) td.scope = 'row';
+        td.textContent = String(cell);
+        if(i) td.className = 'n';
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); holder.appendChild(t);
+  }
+  btn.addEventListener('click', () => {
+    holder.hidden = !holder.hidden;
+    btn.setAttribute('aria-expanded', String(!holder.hidden));
+    btn.textContent = holder.hidden ? 'Table view' : 'Hide table';
+    render();
+  });
+  return {refresh: render};
+}
 function setText(id,v){ const e=document.getElementById(id); if(e) e.textContent = v; }
 
 /* ---- deterministic RNG ---- */
@@ -1902,6 +2167,7 @@ const NullLab = (function(){
     z: document.getElementById('sp-noise'), zv: document.getElementById('sp-noise-v')
   };
 
+  let lastBins = null;
   function draw(){
     const N = +els.n.value, ACT = Math.min(+els.a.value, N), NOISE = +els.z.value/100;
     els.nv.textContent = N; els.av.textContent = ACT; els.zv.textContent = NOISE.toFixed(2);
@@ -1933,7 +2199,12 @@ const NullLab = (function(){
 
     clear(c);
     const ctx = c.ctx;
-    const hues = i => `hsl(${(i*360/Math.max(N,1) + 205) % 360} 62% ${isDark() ? 64 : 42}%)`;
+    // Emphasis, not categorical: one tracked feature in slot 1, every other feature in
+    // the de-emphasis gray. Generating N hues for N features would fail every CVD gate
+    // past 8 series and would spend the identity channel on something the chart is
+    // trying to show is NOT identifiable.
+    const TRACKED = 0;
+    const hues = i => (i === TRACKED ? C.v1 : C.vmute);
 
     // ---- left plane ----
     const PX=30, PY=28, PW=360, PH=360, cx=PX+PW/2, cy=PY+PH/2, R=150;
@@ -1942,29 +2213,41 @@ const NullLab = (function(){
     ctx.strokeRect(PX,PY,PW,PH); ctx.restore();
     line(ctx,PX,cy,PX+PW,cy,C.rule,1,[3,3]);
     line(ctx,cx,PY,cx,PY+PH,C.rule,1,[3,3]);
-    txt(ctx,'neuron 0',PX+PW-6,cy-6,{size:9.5,color:C.grey,align:'right'});
-    txt(ctx,'neuron 1',cx+6,PY+12,{size:9.5,color:C.grey});
+    txt(ctx,'neuron 0',PX+6,cy+14,{size:9.5,color:C.ink3});
+    txt(ctx,'neuron 1',cx+6,PY+12,{size:9.5,color:C.ink3});
 
     ctx.save();
     ctx.beginPath(); ctx.rect(PX,PY,PW,PH); ctx.clip();
-    ctx.globalAlpha=0.55;
-    pts.forEach((p,i)=>{
-      ctx.fillStyle = hues(owner[i]);
-      ctx.beginPath(); ctx.arc(cx+p[0]*R*0.42, cy-p[1]*R*0.42, 1.8, 0, 6.284); ctx.fill();
+    // de-emphasis first, tracked feature on top so it is never buried
+    [false, true].forEach(wantTracked => {
+      pts.forEach((p,i)=>{
+        if((owner[i] === TRACKED) !== wantTracked) return;
+        ctx.globalAlpha = wantTracked ? 0.85 : 0.34;
+        ctx.fillStyle = hues(owner[i]);
+        ctx.beginPath(); ctx.arc(cx+p[0]*R*0.42, cy-p[1]*R*0.42, wantTracked ? 2.2 : 1.8, 0, 6.284);
+        ctx.fill();
+      });
     });
     ctx.restore();
 
     dirs.forEach((d,i)=>{
-      ctx.save(); ctx.strokeStyle=hues(i); ctx.lineWidth=2; ctx.globalAlpha=0.95;
+      if(i === TRACKED) return;
+      ctx.save(); ctx.strokeStyle=C.vmute; ctx.lineWidth=2; ctx.lineCap='round'; ctx.globalAlpha=0.7;
       ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+d[0]*R, cy-d[1]*R); ctx.stroke();
-      ctx.beginPath(); ctx.arc(cx+d[0]*R, cy-d[1]*R, 3.2, 0, 6.284); ctx.fillStyle=hues(i); ctx.fill();
       ctx.restore();
     });
+    ctx.save(); ctx.strokeStyle=C.v1; ctx.lineWidth=2; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+dirs[TRACKED][0]*R, cy-dirs[TRACKED][1]*R);
+    ctx.stroke(); ctx.restore();
+    dot(ctx, cx+dirs[TRACKED][0]*R, cy-dirs[TRACKED][1]*R, 4, C.v1);
+    txt(ctx, 'feature 0', cx+dirs[TRACKED][0]*R - 4, cy-dirs[TRACKED][1]*R - 12,
+        {size:10.5, color:C.ink2, weight:'600', align:'right'});
 
     // ---- right histogram of neuron 0 ----
     const HX=460, HY=28, HW=550, HH=360;
-    txt(ctx,'NEURON 0 ACTIVATION, COLOURED BY WHICH FEATURE FIRED',HX,HY-10,{size:10.5,color:C.ink3,weight:'600'});
-    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(HX,HY,HW,HH); ctx.restore();
+    txt(ctx,'NEURON 0 ACTIVATION — FEATURE 0 AGAINST EVERYTHING ELSE',HX,HY-10,{size:10.5,color:C.ink3,weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.vaxis; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(HX,HY); ctx.lineTo(HX,HY+HH-20); ctx.stroke(); ctx.restore();
 
     const NB=34, lo=-2.6, hi=2.6;
     const bins = Array.from({length:NB}, ()=>new Array(N).fill(0));
@@ -1976,16 +2259,18 @@ const NullLab = (function(){
     bins.forEach(b => { const t=b.reduce((a,v)=>a+v,0); if(t>maxbin) maxbin=t; });
 
     const bw = HW/NB;
+    const base = HY+HH-20;
+    lastBins = [];
     for(let b=0;b<NB;b++){
-      let acc=0;
-      for(let f=0;f<N;f++){
-        const v = bins[b][f]; if(!v) continue;
-        const h = v/maxbin*(HH-40);
-        rect(ctx, HX+b*bw+0.5, HY+HH-20-acc-h, bw-1, h, hues(f));
-        acc += h;
-      }
+      let tracked = 0, other = 0;
+      for(let f=0;f<N;f++){ (f===TRACKED ? (tracked += bins[b][f]) : (other += bins[b][f])); }
+      lastBins.push({tracked, other});
+      const ho = other/maxbin*(HH-40), ht = tracked/maxbin*(HH-40);
+      // 2px surface gap does the separating between the two stacked classes
+      if(ho > 0) barUp(ctx, HX+b*bw+GAP/2, bw-GAP, base-ho, base, C.vmute, 0);
+      if(ht > 0) barUp(ctx, HX+b*bw+GAP/2, bw-GAP, base-ho-GAP-ht, base-ho-GAP, C.v1, 3);
     }
-    line(ctx,HX,HY+HH-20,HX+HW,HY+HH-20,C.rule,1);
+    line(ctx,HX,base,HX+HW,base,C.vaxis,1);
     txt(ctx,'−2.6',HX+2,HY+HH-6,{size:9.5,color:C.ink3,font:MONO});
     txt(ctx,'0',HX+HW/2,HY+HH-6,{size:9.5,color:C.ink3,font:MONO,align:'center'});
     txt(ctx,'+2.6',HX+HW-2,HY+HH-6,{size:9.5,color:C.ink3,font:MONO,align:'right'});
@@ -2000,6 +2285,24 @@ const NullLab = (function(){
     setText('sp-maxcos', fmt(maxcos,3));
     setText('sp-purity', fmt(purity,2));
   }
+  attachTip(c, (x,y) => {
+    const HX=460, HY=28, HW=550, HH=360;
+    if(x < HX || x > HX+HW || y < HY || y > HY+HH) return null;
+    const NB=34, lo=-2.6, hi=2.6;
+    const b = Math.min(NB-1, Math.max(0, Math.floor((x-HX)/(HW/NB))));
+    const st = lastBins && lastBins[b];
+    if(!st) return null;
+    const tot = st.tracked + st.other;
+    return {
+      title: 'neuron 0 ∈ [' + (lo+(hi-lo)*b/NB).toFixed(2) + ', ' + (lo+(hi-lo)*(b+1)/NB).toFixed(2) + ']',
+      x: HX + (b+0.5)*(HW/NB), y: HY + 14,
+      rows: [
+        {value: String(st.tracked), label: 'from feature 0', color: C.v1},
+        {value: String(st.other), label: 'from every other feature', color: C.vmute},
+        {value: tot ? (st.tracked/tot*100).toFixed(0)+'%' : '—', label: 'is feature 0'}
+      ]
+    };
+  });
   [els.n, els.a, els.z].forEach(e => e.addEventListener('input', draw));
   onTheme(draw); draw();
 })();
@@ -2138,14 +2441,17 @@ const PHEN_LABEL = {
     let mx = 0; for(const v of vals) mx = Math.max(mx, Math.abs(v));
     mx = mx || 1;
     const zero = y + h/2;
-    line(ctx, x, zero, x+w, zero, C.ruleSoft, 1);
+    line(ctx, x, zero, x+w, zero, C.vaxis, 1);
     for(let i=0;i<n;i++){
       const v = vals[i];
       const bh = Math.abs(v)/mx * (h/2 - 2);
       const isMark = mark && mark.has(i);
-      ctx.fillStyle = isMark ? (markColor||C.amber) : (v < 0 && negColor ? negColor : color);
-      if(!isMark && base) ctx.fillStyle = base;
-      ctx.fillRect(x + i*bw + 0.6, v >= 0 ? zero - bh : zero, Math.max(1, bw-1.2), bh);
+      let fill = isMark ? (markColor||C.v1) : (v < 0 && negColor ? negColor : color);
+      if(!isMark && base) fill = base;
+      // grows from the zero baseline; the 2px surface gap separates neighbours
+      const bx = x + i*bw + GAP/2, bwid = Math.max(1, bw - GAP);
+      if(v >= 0) barUp(ctx, bx, bwid, zero - bh, zero, fill);
+      else       barDn(ctx, bx, bwid, zero, zero + bh, fill);
     }
     return {bw, zero, mx};
   }
@@ -2183,27 +2489,27 @@ const PHEN_LABEL = {
 
     let y = TOP;
     stage('1 · INPUT  x  (d = 16)', 'raw activation', y);
-    bars(ctx, x, L, y, W1, BH, {color:C.ink2});
+    bars(ctx, x, L, y, W1, BH, {color:C.v2});
     txt(ctx, '2 · CENTRED  x − b_pre', L+W1+70, y-10, {size:10.5, color:C.ink3, weight:'600'});
-    bars(ctx, pre, L+W1+70, y, W1, BH, {color:C.ink2});
+    bars(ctx, pre, L+W1+70, y, W1, BH, {color:C.v2});
 
     y += BH + GAP + 12;
     stage('3 · ENCODER PRE-ACTIVATIONS  z = W_enc(x − b_pre)  (m = 32)', 'top ' + K + ' kept', y);
-    const b3 = bars(ctx, z, L, y, W2, BH, {base:C.grey, mark:sel, markColor:C.blue});
+    const b3 = bars(ctx, z, L, y, W2, BH, {base:C.vmute, mark:sel, markColor:C.v1});
     if(picked >= 0){
-      ctx.save(); ctx.strokeStyle=C.amber; ctx.lineWidth=1.5;
+      ctx.save(); ctx.strokeStyle=C.ink2; ctx.lineWidth=1.5;
       ctx.strokeRect(L + picked*b3.bw, y, Math.max(2,b3.bw), BH); ctx.restore();
     }
 
     y += BH + GAP;
     stage('4 · SPARSE CODE  zk  (ReLU applied after selection)', 'L0 = ' + l0, y);
-    bars(ctx, zk, L, y, W2, BH, {color:C.blue});
+    bars(ctx, zk, L, y, W2, BH, {color:C.v1});
 
     y += BH + GAP + 12;
     stage('5 · RECONSTRUCTION  x̂ = D·zk + b_pre', 'outline = original x', y);
-    const b5 = bars(ctx, xh, L, y, W1, BH, {color:C.blue});
+    const b5 = bars(ctx, xh, L, y, W1, BH, {color:C.v1});
     // overlay original as outline
-    ctx.save(); ctx.strokeStyle=C.amber; ctx.lineWidth=1.2;
+    ctx.save(); ctx.strokeStyle=C.v2; ctx.lineWidth=1.2;
     for(let i=0;i<D;i++){
       const bh = Math.abs(x[i])/b5.mx*(BH/2-2);
       ctx.strokeRect(L + i*b5.bw + 0.6, x[i]>=0 ? b5.zero-bh : b5.zero, Math.max(1,b5.bw-1.2), bh);
@@ -2213,13 +2519,13 @@ const PHEN_LABEL = {
     txt(ctx, '6 · RESIDUAL  x̂ − x', L+W1+70, y-10, {size:10.5, color:C.ink3, weight:'600'});
     const res = new Float32Array(D);
     for(let i=0;i<D;i++) res[i] = xh[i]-x[i];
-    bars(ctx, res, L+W1+70, y, W1, BH, {color:C.warn});
+    bars(ctx, res, L+W1+70, y, W1, BH, {color:C.v2});
 
     if(picked >= 0){
       y += BH + GAP;
       txt(ctx, 'DICTIONARY COLUMN ' + picked + '  —  D[:, ' + picked + '], a unit direction in R^16',
-          L, y-10, {size:10.5, color:C.amber, weight:'600'});
-      bars(ctx, dict[picked], L, y, W1, 40, {color:C.amber});
+          L, y-10, {size:10.5, color:C.ink2, weight:'600'});
+      bars(ctx, dict[picked], L, y, W1, 40, {color:C.v1});
     }
 
     setText('fw-l0', String(l0));
@@ -2238,6 +2544,32 @@ const PHEN_LABEL = {
       picked = (picked === j) ? -1 : j;
     } else picked = -1;
     draw();
+  });
+  attachTip(c, (x,y) => {
+    const L = 34, W2 = 620, TOP = 34, BH = 62, GAP2 = 30;
+    const y3 = TOP + BH + GAP2 + 12, y4 = y3 + BH + GAP2;
+    const inZ = y >= y3 && y <= y3+BH, inZk = y >= y4 && y <= y4+BH;
+    if(x < L || x > L+W2 || !(inZ || inZk)) return null;
+    const K = +els.k.value, S = +els.s.value, useRelu = els.relu.checked;
+    const xv = INPUTS[S];
+    const pre2 = new Float32Array(D);
+    for(let i=0;i<D;i++) pre2[i] = xv[i] - bPre[i];
+    const z2 = new Float32Array(M);
+    for(let j=0;j<M;j++){ let a=0; for(let i=0;i<D;i++) a += dict[j][i]*pre2[i]; z2[j]=a; }
+    const ord = Array.from({length:M}, (_,j)=>j).sort((a,b)=>z2[b]-z2[a]);
+    const chosen = new Set(ord.slice(0,K));
+    const j = Math.min(M-1, Math.max(0, Math.floor((x-L)/(W2/M))));
+    const kept = chosen.has(j);
+    const code = kept ? (useRelu ? Math.max(z2[j],0) : z2[j]) : 0;
+    return {
+      title: 'dictionary column ' + j,
+      x: L + (j+0.5)*(W2/M), y: (inZ ? y3 : y4) + 4,
+      rows: [
+        {value: z2[j].toFixed(3), label: 'pre-activation z', color: kept ? C.v1 : C.vmute},
+        {value: code.toFixed(3), label: kept ? 'code zk — kept by top-k' : 'code zk — discarded'},
+        {value: 'rank ' + (ord.indexOf(j)+1) + ' of ' + M, label: ''}
+      ]
+    };
   });
   c.cv.addEventListener('keydown', ev => {
     if(ev.key === 'ArrowRight' || ev.key === 'ArrowLeft'){
@@ -2618,34 +2950,48 @@ const SAELab = (function(){
     const b = el('tr-run'); if(b) b.textContent = 'Train';
   }
 
+  let geom = null;
   function draw(){
     clear(c);
     const ctx = c.ctx, H = c.H;
-    const PADX = 26, GAPX = 30, TOP = 26, BOT = 30;
+    const PADX = 48, GAPX = 26, TOP = 26, BOT = 30;
     const PANW = Math.floor((c.W - 2*PADX - 2*GAPX) / 3);
     const ph = H - TOP - BOT;
+    geom = {PADX, GAPX, TOP, BOT, PANW, ph};
 
+    function axes(x0){
+      ctx.save(); ctx.strokeStyle = C.vaxis; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, TOP); ctx.lineTo(x0, TOP+ph); ctx.lineTo(x0+PANW, TOP+ph);
+      ctx.stroke(); ctx.restore();
+    }
     // ---- (a) loss curve ----
     let x0 = PADX;
     txt(ctx,'BATCH MSE  (log scale)', x0, TOP-9, {size:10, color:C.ink3, weight:'600'});
-    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(x0, TOP, PANW, ph); ctx.restore();
+    axes(x0);
     if(sae && sae.hist.length > 1){
       const hs = sae.hist;
       let lo = Infinity, hi = -Infinity;
       hs.forEach(h => { const v = Math.log10(Math.max(h.mse,1e-6)); if(v<lo)lo=v; if(v>hi)hi=v; });
       if(hi - lo < 0.5){ hi = lo + 0.5; }
-      ctx.save(); ctx.strokeStyle = C.blue; ctx.lineWidth = 1.6; ctx.beginPath();
+      ctx.save(); ctx.strokeStyle = C.v1; ctx.lineWidth = 2;
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
       hs.forEach((h,i) => {
         const px = x0 + h.t/SAELab.MAXSTEPS*PANW;
         const py = TOP + ph - (Math.log10(Math.max(h.mse,1e-6)) - lo)/(hi-lo)*(ph-6) - 3;
         i ? ctx.lineTo(px,py) : ctx.moveTo(px,py);
       });
       ctx.stroke(); ctx.restore();
-      txt(ctx, '10^'+hi.toFixed(1), x0+4, TOP+11, {size:9.5, color:C.ink3, font:MONO});
-      txt(ctx, '10^'+lo.toFixed(1), x0+4, TOP+ph-5, {size:9.5, color:C.ink3, font:MONO});
-      // renorm markers
-      if(cfg.renorm) for(let s=500;s<=SAELab.MAXSTEPS && s<=sae.t;s+=500){
-        line(ctx, x0+s/SAELab.MAXSTEPS*PANW, TOP, x0+s/SAELab.MAXSTEPS*PANW, TOP+ph, C.ruleSoft, 1, [2,3]);
+      txt(ctx, '10^'+hi.toFixed(1), x0-5, TOP+9, {size:9, color:C.ink3, font:MONO, align:'right'});
+      txt(ctx, '10^'+lo.toFixed(1), x0-5, TOP+ph, {size:9, color:C.ink3, font:MONO, align:'right'});
+      // decoder-renormalisation events: solid hairline annotations, labelled once
+      if(cfg.renorm){
+        for(let st=500; st<=SAELab.MAXSTEPS && st<=sae.t; st+=500){
+          const mx = x0+st/SAELab.MAXSTEPS*PANW;
+          line(ctx, mx, TOP, mx, TOP+ph, C.vgrid, 1);
+        }
+        if(sae.t >= 500)
+          txt(ctx, 'decoder renormalised', x0+500/SAELab.MAXSTEPS*PANW+4, TOP+ph-6,
+              {size:9.5, color:C.ink3});
       }
     } else {
       txt(ctx,'press Train', x0+PANW/2, TOP+ph/2, {size:12, color:C.ink3, align:'center'});
@@ -2656,46 +3002,71 @@ const SAELab = (function(){
     // ---- (b) per-true-feature recovery ----
     x0 = PADX + PANW + GAPX;
     txt(ctx,'RECOVERY OF EACH TRUE FEATURE  (max |cos|)', x0, TOP-9, {size:10, color:C.ink3, weight:'600'});
-    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(x0, TOP, PANW, ph); ctx.restore();
-    for(const g of [0.25,0.5,0.75]){
-      line(ctx, x0, TOP+ph-g*ph, x0+PANW, TOP+ph-g*ph, C.ruleSoft, 1, [2,3]);
-      txt(ctx, g.toFixed(2), x0+PANW-3, TOP+ph-g*ph-3, {size:9, color:C.ink3, font:MONO, align:'right'});
+    axes(x0);
+    for(const g of [0.25,0.5,0.75,1]){
+      grid(ctx, x0, TOP+ph-g*ph, x0+PANW, TOP+ph-g*ph);
+      txt(ctx, g.toFixed(2), x0-5, TOP+ph-g*ph+3.5, {size:9, color:C.ink3, font:MONO, align:'right'});
     }
     if(metrics.perTrue){
+      // one series, one hue: bar height already encodes magnitude, so colour is
+      // not spent re-encoding it (and status colours never stand in for a ramp)
       const v = Array.from(metrics.perTrue).sort((a,b)=>b-a);
       const bw = PANW/v.length;
       v.forEach((val,i)=>{
-        const h = val*ph;
-        ctx.fillStyle = val > 0.9 ? C.ok : (val > 0.7 ? C.amber : C.warn);
-        ctx.fillRect(x0+i*bw, TOP+ph-h, Math.max(1,bw-0.6), h);
+        barUp(ctx, x0+i*bw+GAP/2, Math.max(1,bw-GAP), TOP+ph-val*ph, TOP+ph, C.v1);
       });
-      line(ctx, x0, TOP+ph-metrics.rec*ph, x0+PANW, TOP+ph-metrics.rec*ph, C.blue, 1.4);
-      txt(ctx,'mean '+fmt(metrics.rec,2), x0+4, TOP+ph-metrics.rec*ph-4, {size:9.5, color:C.blue, font:MONO});
+      line(ctx, x0, TOP+ph-metrics.rec*ph, x0+PANW, TOP+ph-metrics.rec*ph, C.ink2, 1.4);
+      txt(ctx,'mean '+fmt(metrics.rec,2), x0+PANW-4, TOP+ph-metrics.rec*ph-5,
+          {size:9.5, color:C.ink2, font:MONO, weight:'600', align:'right'});
     }
     txt(ctx,'true features, best-recovered first', x0, TOP+ph+13, {size:9.5, color:C.ink3});
 
     // ---- (c) dictionary usage ----
     x0 = PADX + 2*(PANW + GAPX);
-    txt(ctx,'HOW OFTEN EACH DICTIONARY ENTRY FIRES', x0, TOP-9, {size:10, color:C.ink3, weight:'600'});
-    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(x0, TOP, PANW, ph); ctx.restore();
+    txt(ctx,'HOW OFTEN EACH DICTIONARY ENTRY FIRES'
+        + (isFinite(metrics.dead) ? '  ·  ' + metrics.dead + ' DEAD' : ''),
+        x0, TOP-9, {size:10, color:C.ink3, weight:'600'});
+    axes(x0);
     if(sae && sae.t > 0){
       const fc = Array.from(sae.fireCount);
       const mx = Math.max(1, ...fc);
       const bw = PANW/sae.m;
       for(let j=0;j<sae.m;j++){
         const dead = (sae.t - sae.lastFired[j]) > 500;
-        const h = Math.sqrt(fc[j]/mx)*ph;
-        ctx.fillStyle = dead ? C.warn : C.blue;
-        ctx.globalAlpha = dead ? 0.75 : 0.85;
-        ctx.fillRect(x0+j*bw, TOP+ph-Math.max(h,dead?2:0), Math.max(1,bw-0.5), Math.max(h,dead?2:0));
-        ctx.globalAlpha = 1;
+        const h = Math.max(Math.sqrt(fc[j]/mx)*ph, dead ? 2 : 0);
+        barUp(ctx, x0+j*bw+GAP/2, Math.max(1,bw-GAP), TOP+ph-h, TOP+ph, dead ? C.vmute : C.v1, 3);
       }
-      if(isFinite(metrics.dead))
-        txt(ctx, metrics.dead + ' dead', x0+PANW-4, TOP+12, {size:10, color:C.warn, font:MONO, align:'right'});
+
     }
     txt(ctx,'dictionary index (√ scale)', x0, TOP+ph+13, {size:9.5, color:C.ink3});
   }
 
+  attachTip(c, (x,y) => {
+    if(!geom || !sae || sae.t === 0) return null;
+    const {PADX, GAPX, TOP, PANW, ph} = geom;
+    if(y < TOP || y > TOP+ph) return null;
+    const xRec = PADX + PANW + GAPX, xUse = PADX + 2*(PANW + GAPX);
+    if(metrics.perTrue && x >= xRec && x <= xRec+PANW){
+      const v = Array.from(metrics.perTrue).sort((a,b)=>b-a);
+      const bw = PANW/v.length;
+      const i = Math.min(v.length-1, Math.max(0, Math.floor((x-xRec)/bw)));
+      return {title: 'true feature, rank ' + (i+1) + ' of ' + v.length,
+              x: xRec + i*bw + bw/2, y: TOP + ph - v[i]*ph,
+              rows: [{value: v[i].toFixed(3), label: 'best |cos| with a live dictionary column', color: C.v1}]};
+    }
+    if(x >= xUse && x <= xUse+PANW){
+      const bw = PANW/sae.m;
+      const j = Math.min(sae.m-1, Math.max(0, Math.floor((x-xUse)/bw)));
+      const dead = (sae.t - sae.lastFired[j]) > 500;
+      return {title: 'dictionary entry ' + j,
+              x: xUse + j*bw + bw/2, y: TOP + 14,
+              rows: [
+                {value: sae.fireCount[j].toLocaleString(), label: 'times fired', color: dead ? C.vmute : C.v1},
+                {value: dead ? 'dead' : 'alive', label: dead ? 'silent 500+ steps' : 'fired recently'}
+              ]};
+    }
+    return null;
+  });
   ids.forEach(k => el('tr-'+k).addEventListener('input', () => { syncLabels(); reset(); }));
   el('tr-speed').addEventListener('input', () => {   // pace only; never restart the run
     syncLabels(); if(cfg) cfg.speed = +el('tr-speed').value;
@@ -2737,7 +3108,7 @@ const SAELab = (function(){
     const STEPS = 900;
     function next(){
       if(token !== runToken){ busy = false; return; }
-      if(i >= KS.length){ busy = false; setText('fr-status','done · ' + KS.length + ' autoencoders'); draw(); return; }
+      if(i >= KS.length){ busy = false; setText('fr-status','done · ' + KS.length + ' autoencoders'); draw(); frTable.refresh(); return; }
       const cfg = Object.assign({}, cfg0, {k:Math.min(KS[i], cfg0.m)});
       const sae = SAELab.makeSAE(cfg, data);
       const rng = mulberry32(cfg.seed*31337 + 5);
@@ -2752,66 +3123,124 @@ const SAELab = (function(){
         const ho = SAELab.evaluate(sae, data, SAELab.NTRAIN, SAELab.NTRAIN + SAELab.NHOLD);
         const q = SAELab.dictQuality(sae, data, false);
         results.push({k:cfg.k, fvu:Math.max(0, 1-ho.ve), rec:q.recovery, dead:q.dead});
-        draw(); i++; requestAnimationFrame(next);
+        draw(); frTable.refresh(); i++; requestAnimationFrame(next);
       }
       requestAnimationFrame(chunk);
     }
     next();
   }
 
+  /* Two stacked panels on a shared x axis — NOT a dual-axis plot. The two
+     measures live on different scales, so they get their own panel each and
+     the reader is never asked to trust an arbitrary alignment of two y-axes. */
+  const KOF = k => Math.log2(k) / Math.log2(24);
+
+  function geom(){
+    const L = 66, R = 26, T = 26, GAPY = 34, B = 46;
+    const pw = c.W - L - R;
+    const ph = Math.floor((c.H - T - GAPY - B) / 2);
+    return {L, R, T, GAPY, B, pw, ph, top:T, bot:T + ph + GAPY};
+  }
+
+  function panel(ctx, g, y0, title, color, accessor, fmtTick, maxV){
+    ctx.save(); ctx.strokeStyle = C.vaxis; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(g.L, y0); ctx.lineTo(g.L, y0 + g.ph); ctx.lineTo(g.L + g.pw, y0 + g.ph);
+    ctx.stroke(); ctx.restore();
+    txt(ctx, title, g.L, y0 - 9, {size:10.5, color:C.ink3, weight:'600'});
+    for(let q=0; q<=4; q++){
+      const yy = y0 + g.ph - q/4*g.ph;
+      if(q) grid(ctx, g.L, yy, g.L + g.pw, yy);
+      txt(ctx, fmtTick(q/4*maxV), g.L - 7, yy + 3.5,
+          {size:9.5, color:C.ink3, font:MONO, align:'right'});
+    }
+    if(!results.length) return;
+    ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
+    results.forEach((r,i) => {
+      const px = g.L + KOF(r.k)*g.pw, py = y0 + g.ph - (accessor(r)/maxV)*g.ph;
+      i ? ctx.lineTo(px,py) : ctx.moveTo(px,py);
+    });
+    ctx.stroke(); ctx.restore();
+    results.forEach(r => dot(ctx, g.L + KOF(r.k)*g.pw, y0 + g.ph - (accessor(r)/maxV)*g.ph, 4, color));
+  }
+
   function draw(){
     clear(c);
-    const ctx = c.ctx, W = c.W, H = c.H;
-    const L = 62, R = 62, T = 26, B = 44;
-    const pw = W - L - R, ph = H - T - B;
-    ctx.save(); ctx.strokeStyle = C.ruleSoft; ctx.strokeRect(L, T, pw, ph); ctx.restore();
+    const ctx = c.ctx;
+    const g = geom();
+    const rawF = results.length ? Math.max(0.05, ...results.map(r=>r.fvu)) : 0.2;
+    const nf = niceMax(rawF, 4);
 
-    const xOf = k => L + (Math.log2(k) / Math.log2(24)) * pw;
+    panel(ctx, g, g.top, 'FRACTION OF VARIANCE UNEXPLAINED  (held out) — lower is better',
+          C.v1, r=>r.fvu, tickFmt(nf.step), nf.max);
+    panel(ctx, g, g.bot, 'GROUND-TRUTH RECOVERY  (mean max |cos|) — higher is better',
+          C.v2, r=>r.rec, v=>v.toFixed(2), 1);
+
+    // shared x axis, drawn once under the lower panel
     for(const k of KS){
-      line(ctx, xOf(k), T, xOf(k), T+ph, C.ruleSoft, 1, [2,4]);
-      txt(ctx, String(k), xOf(k), T+ph+15, {size:10, color:C.ink3, font:MONO, align:'center'});
+      const x = g.L + KOF(k)*g.pw;
+      line(ctx, x, g.bot + g.ph, x, g.bot + g.ph + 4, C.vaxis, 1);
+      txt(ctx, String(k), x, g.bot + g.ph + 17, {size:10, color:C.ink3, font:MONO, align:'center'});
     }
-    txt(ctx,'L0  =  k  (log axis)', L+pw/2, T+ph+34, {size:11, color:C.ink2, align:'center'});
-    txt(ctx,'FRACTION OF VARIANCE UNEXPLAINED (held out)', L, T-9, {size:10, color:C.blue, weight:'600'});
-    txt(ctx,'GROUND-TRUTH RECOVERY', L+pw, T-9, {size:10, color:C.amber, weight:'600', align:'right'});
+    txt(ctx, 'L0  =  k   (log axis)', g.L + g.pw/2, g.bot + g.ph + 35,
+        {size:11, color:C.ink2, align:'center'});
 
     if(!results.length){
-      txt(ctx,'press Run sweep', L+pw/2, T+ph/2, {size:12, color:C.ink3, align:'center'});
+      txt(ctx, 'press Run sweep', g.L + g.pw/2, g.top + g.ph, {size:12, color:C.ink3, align:'center'});
       return;
     }
-    const maxF = Math.max(0.05, ...results.map(r=>r.fvu));
-    for(let g=0; g<=4; g++){
-      const yy = T + ph - g/4*ph;
-      line(ctx, L, yy, L+pw, yy, C.ruleSoft, 1);
-      txt(ctx, (g/4*maxF).toFixed(3), L-5, yy+3, {size:9.5, color:C.blue, font:MONO, align:'right'});
-      txt(ctx, (g/4).toFixed(2), L+pw+5, yy+3, {size:9.5, color:C.amber, font:MONO});
-    }
-    // FVU line
-    ctx.save(); ctx.strokeStyle=C.blue; ctx.lineWidth=1.8; ctx.beginPath();
-    results.forEach((r,i)=>{ const px=xOf(r.k), py=T+ph-(r.fvu/maxF)*ph; i?ctx.lineTo(px,py):ctx.moveTo(px,py); });
-    ctx.stroke(); ctx.restore();
-    results.forEach(r=>{ const px=xOf(r.k), py=T+ph-(r.fvu/maxF)*ph;
-      ctx.fillStyle=C.blue; ctx.beginPath(); ctx.arc(px,py,3.4,0,6.284); ctx.fill(); });
-    // recovery line
-    ctx.save(); ctx.strokeStyle=C.amber; ctx.lineWidth=1.8; ctx.setLineDash([5,3]); ctx.beginPath();
-    results.forEach((r,i)=>{ const px=xOf(r.k), py=T+ph-r.rec*ph; i?ctx.lineTo(px,py):ctx.moveTo(px,py); });
-    ctx.stroke(); ctx.restore();
-    results.forEach(r=>{ const px=xOf(r.k), py=T+ph-r.rec*ph;
-      ctx.fillStyle=C.amber; ctx.beginPath(); ctx.arc(px,py,3.4,0,6.284); ctx.fill(); });
-
-    // mark the peak of recovery
-    const best = results.reduce((a,b)=>b.rec>a.rec?b:a, results[0]);
-    const bx = xOf(best.k);
-    line(ctx, bx, T, bx, T+ph, C.amber, 1.2, [3,3]);
-    const flip = bx > L + pw*0.62;
-    txt(ctx,'recovery peaks at k = '+best.k, bx + (flip ? -6 : 6), T+14,
-        {size:10.5, color:C.amber, weight:'600', align: flip ? 'right' : 'left'});
+    // direct-label the one point the section is about: where recovery peaks
+    const maxF = nf.max;
+    const best = results.reduce((a,b)=> b.rec > a.rec ? b : a, results[0]);
+    const bx = g.L + KOF(best.k)*g.pw;
+    line(ctx, bx, g.bot, bx, g.bot + g.ph, C.v2, 1);
+    const flip = bx > g.L + g.pw*0.6;
+    txt(ctx, 'peak  k = ' + best.k + ' · ' + fmt(best.rec,2), bx + (flip ? -7 : 7), g.bot + 13,
+        {size:10.5, color:C.v2, weight:'600', align: flip ? 'right' : 'left'});
+    const last = results[results.length-1];
+    txt(ctx, fmt(last.fvu,3), g.L + KOF(last.k)*g.pw - 7,
+        g.top + g.ph - (last.fvu/maxF)*g.ph - 8,
+        {size:10.5, color:C.v1, font:MONO, align:'right', weight:'600'});
   }
+
+  attachTip(c, (x,y) => {
+    if(!results.length) return null;
+    const g = geom();
+    if(x < g.L - 12 || x > g.L + g.pw + 12) return null;
+    let best = null, bd = 1e9;
+    results.forEach(r => {
+      const d = Math.abs(g.L + KOF(r.k)*g.pw - x);
+      if(d < bd){ bd = d; best = r; }
+    });
+    if(!best || bd > 34) return null;
+    const maxF = niceMax(Math.max(0.05, ...results.map(r=>r.fvu)), 4).max;
+    const onTop = y < g.bot - g.GAPY/2;
+    return {
+      title: 'k = ' + best.k,
+      x: g.L + KOF(best.k)*g.pw,
+      y: onTop ? g.top + g.ph - (best.fvu/maxF)*g.ph : g.bot + g.ph - best.rec*g.ph,
+      rows: [
+        {value: fmt(best.fvu,4), label: 'unexplained variance', color: C.v1},
+        {value: fmt(best.rec,3),  label: 'recovery',             color: C.v2},
+        {value: best.dead + ' / ' + (window.__saeTrainer ? window.__saeTrainer.getCfg().m : '—'),
+         label: 'dead features'}
+      ]
+    };
+  });
+
+  const frTable = attachTable('p-frontier',
+    'Sparsity–fidelity sweep: one top-k SAE per k, 900 steps each, held-out reconstruction.',
+    () => ({
+      cols: ['k (L0)', 'Variance unexplained', 'Recovery', 'Dead features'],
+      rows: results.length
+        ? results.map(r => [r.k, fmt(r.fvu,4), fmt(r.rec,3), r.dead])
+        : [['—','—','—','—']]
+    }));
 
   document.getElementById('fr-run').addEventListener('click', run);
   document.getElementById('fr-clear').addEventListener('click', ()=>{
     runToken++; busy = false; results = [];
-    setText('fr-status','press Run sweep'); draw();
+    setText('fr-status','press Run sweep'); draw(); frTable.refresh();
   });
   onTheme(draw); draw();
 })();
@@ -2897,19 +3326,19 @@ const SAELab = (function(){
     line(ctx, px(0), T, px(0), T+ph, C.ruleSoft, 1, [2,3]);
     const rowStable = T + ph*0.66, rowFlip = T + ph*0.28;
     txt(ctx,'stable clusters', L1+6, rowStable+22, {size:10, color:C.ink3});
-    txt(ctx,'flipped clusters', L1+6, rowFlip-14, {size:10, color:C.amber});
+    txt(ctx,'flipped clusters', L1+6, rowFlip-14, {size:10, color:C.ink2, weight:'600'});
     const rng2 = mulberry32(77);
     cache.x.forEach((v,i)=>{
       const flip = cache.y[i] === 1;
       const yy = (flip ? rowFlip : rowStable) + (rng2()-0.5)*30;
-      ctx.fillStyle = flip ? C.amber : C.grey;
-      ctx.globalAlpha = flip ? 0.9 : 0.45;
+      ctx.fillStyle = flip ? C.v1 : C.vmute;
+      ctx.globalAlpha = flip ? 0.9 : 0.4;
       ctx.beginPath(); ctx.arc(px(v), yy, flip?2.8:2, 0, 6.284); ctx.fill();
       ctx.globalAlpha = 1;
     });
-    line(ctx, px(cache.sep), rowFlip-32, px(cache.sep), rowFlip+32, C.amber, 1.4);
-    line(ctx, px(0), rowStable-32, px(0), rowStable+32, C.grey, 1.4);
-    txt(ctx,'r = '+fmt(cache.rOne,3), L1+W1-6, T+16, {size:12, color:C.blue, font:MONO, align:'right', weight:'600'});
+    line(ctx, px(cache.sep), rowFlip-32, px(cache.sep), rowFlip+32, C.v1, 2);
+    line(ctx, px(0), rowStable-32, px(0), rowStable+32, C.vmute, 2);
+    txt(ctx,'r = '+fmt(cache.rOne,3), L1+W1-6, T+16, {size:12, color:C.ink, font:MONO, align:'right', weight:'600'});
 
     // --- right: sampling distribution + nulls ---
     const L2 = 480, W2 = W - L2 - 30;
@@ -2932,22 +3361,38 @@ const SAELab = (function(){
       ctx.restore();
       return mx;
     }
-    hist(cache.selS, C.grey, 0.85, false);
-    hist(cache.rsS, C.blue, 0.75, false);
+    hist(cache.selS, C.vmute, 0.8, false);
+    hist(cache.rsS, C.v1, 0.8, false);
 
     for(let g=0; g<=5; g++){
       const v = lo2 + g/5*(hi2-lo2);
-      line(ctx, px2(v), T+ph, px2(v), T+ph+4, C.rule, 1);
+      line(ctx, px2(v), T+ph, px2(v), T+ph+4, C.vaxis, 1);
       txt(ctx, v.toFixed(2), px2(v), T+ph+16, {size:9.5, color:C.ink3, font:MONO, align:'center'});
     }
+    // a threshold, not a gridline — dashed is the one legitimate use of a dash here
     const p95 = quantile(cache.selS, 0.95);
-    line(ctx, px2(p95), T, px2(p95), T+ph, C.warn, 1.4, [4,3]);
-    txt(ctx,'null 95th pct '+fmt(p95,2), px2(p95)+5, T+14, {size:10, color:C.warn, weight:'600'});
-    txt(ctx,'best of '+(cache.m===1?'1':cache.m.toLocaleString())+' noise features', L2+6, T+ph-8, {size:10, color:C.ink3});
-    txt(ctx,'r with a real effect', L2+6, T+ph-24, {size:10, color:C.blue});
+    line(ctx, px2(p95), T, px2(p95), T+ph, C.ink2, 1.4, [4,3]);
+    txt(ctx,'null 95th pct '+fmt(p95,2), px2(p95)+5, T+14, {size:10, color:C.ink2, weight:'600'});
     txt(ctx,'point-biserial r', L2+W2/2, T+ph+34, {size:11, color:C.ink2, align:'center'});
   }
 
+  attachTip(c, (x,y) => {
+    if(!cache) return null;
+    const T = 30, B = 40, ph = c.H - T - B;
+    const L2 = 480, W2 = c.W - L2 - 30;
+    if(x < L2 || x > L2+W2 || y < T || y > T+ph) return null;
+    const lo2 = -0.25, hi2 = 1.0;
+    const v = lo2 + (x-L2)/W2*(hi2-lo2);
+    const frac = a => { let n=0; for(let i=0;i<a.length;i++) if(a[i] >= v) n++; return n/a.length; };
+    return {
+      title: 'r = ' + v.toFixed(2),
+      x: x, y: T + 6,
+      rows: [
+        {value: (frac(cache.rsS)*100).toFixed(1) + '%', label: 'of real-effect draws reach this', color: C.v1},
+        {value: (frac(cache.selS)*100).toFixed(1) + '%', label: 'of best-of-m noise draws do', color: C.vmute}
+      ]
+    };
+  });
   // changing n rebuilds NullLab's cached base sample, so debounce the slider drag
   const recompute = debounce(()=>{ compute(); draw(); }, 110);
   ['pb-sep','pb-npos','pb-max'].forEach(id =>
@@ -3016,38 +3461,78 @@ const SAE_RUNS = {
     const run = SAE_RUNS[cur];
     const keys = Object.keys(run.registers);
     const vals = keys.map(k => run.registers[k]);
-    const mx = Math.max(...vals), mn = Math.min(...vals);
+    const dataMax = Math.max(...vals), mn = Math.min(...vals);
+    const mx = niceMax(dataMax * 1.14, 4).max;      // headroom for the tip label
+    const step = niceMax(dataMax * 1.14, 4).step;
     const L = 60, R = 30, T = 34, B = 62;
     const pw = W-L-R, ph = H-T-B;
     txt(ctx, 'MEAN ACTIVATION OF FEATURE ' + run.feature + ' · ' + run.label,
         L, T-12, {size:10.5, color:C.ink3, weight:'600'});
     ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(L,T,pw,ph); ctx.restore();
-    for(let g=0;g<=4;g++){
-      const yy = T+ph-g/4*ph;
-      line(ctx, L, yy, L+pw, yy, C.ruleSoft, 1);
-      txt(ctx,(g/4*mx).toFixed(3), L-6, yy+3, {size:9.5, color:C.ink3, font:MONO, align:'right'});
-    }
+    const tf = tickFmt(step);
+    tickList(mx, 4).forEach(v=>{
+      const yy = T+ph-(v/mx)*ph;
+      if(v) grid(ctx, L, yy, L+pw, yy);
+      txt(ctx, tf(v), L-7, yy+3.5, {size:9.5, color:C.ink3, font:MONO, align:'right'});
+    });
+    line(ctx, L, T+ph, L+pw, T+ph, C.vaxis, 1);
+    // registers are nominal — swapping their order changes nothing — so this is ONE
+    // series and every bar takes slot 1. Height already encodes the value; colour is
+    // not spent re-encoding rank. Only the two extremes are direct-labelled.
     const bw = pw/keys.length;
+    const slot = Math.min(24, bw*0.62);
     keys.forEach((k,i)=>{
       const h = vals[i]/mx*ph;
-      const isMax = vals[i]===mx, isMin = vals[i]===mn;
-      ctx.fillStyle = isMax ? C.blue : (isMin ? C.grey : C.blue);
-      ctx.globalAlpha = isMax ? 1 : (isMin ? 0.55 : 0.75);
-      ctx.fillRect(L+i*bw+bw*0.14, T+ph-h, bw*0.72, h);
-      ctx.globalAlpha = 1;
-      txt(ctx, vals[i].toFixed(4), L+i*bw+bw/2, T+ph-h-6, {size:10, color:C.ink2, font:MONO, align:'center'});
+      const cx0 = L+i*bw+bw/2;
+      barUp(ctx, cx0-slot/2, slot, T+ph-h, T+ph, C.v1);
+      if(vals[i]===dataMax || vals[i]===mn)
+        txt(ctx, vals[i].toFixed(4), cx0, T+ph-h-7,
+            {size:10.5, color:C.ink, font:MONO, align:'center', weight:'600'});
       const label = (PHEN_LABEL[k]||k).split(' ');
-      label.forEach((w,li)=> txt(ctx, w, L+i*bw+bw/2, T+ph+16+li*12, {size:10, color:C.ink3, align:'center'}));
+      label.forEach((w,li)=> txt(ctx, w, cx0, T+ph+16+li*12, {size:10, color:C.ink3, align:'center'}));
     });
-    setText('reg-ratio', fmt(mx/mn, 2) + '×');
-    setText('reg-top', (PHEN_LABEL[keys[vals.indexOf(mx)]]||'').replace(' (excluded)',''));
-    setText('reg-spread', (mx-mn).toFixed(4));
+    txt(ctx, 'highest and lowest labelled; every value is in the table view',
+        L, T+ph+48, {size:10, color:C.ink3});
+    setText('reg-ratio', fmt(dataMax/mn, 2) + '×');
+    setText('reg-top', (PHEN_LABEL[keys[vals.indexOf(dataMax)]]||'').replace(' (excluded)',''));
+    setText('reg-spread', (dataMax-mn).toFixed(4));
     const f = document.getElementById('reg-foot'); if(f) f.textContent = FOOTS[cur];
   }
+  attachTip(c, (x,y) => {
+    const run = SAE_RUNS[cur];
+    const keys = Object.keys(run.registers);
+    const L = 60, R = 30, T = 34, B = 62;
+    const pw = c.W-L-R, ph = c.H-T-B;
+    if(x < L || x > L+pw || y < T || y > T+ph+34) return null;
+    const bw = pw/keys.length;
+    const i = Math.min(keys.length-1, Math.max(0, Math.floor((x-L)/bw)));
+    const v = run.registers[keys[i]];
+    const dm = Math.max(...keys.map(k=>run.registers[k]));
+    const mx = niceMax(dm * 1.14, 4).max;
+    return {
+      title: PHEN_LABEL[keys[i]] || keys[i],
+      x: L + i*bw + bw/2,
+      y: T + ph - (v/mx)*ph,
+      rows: [
+        {value: v.toFixed(4), label: 'mean activation', color: C.v1},
+        {value: (v/dm*100).toFixed(0) + '%', label: 'of the highest register'}
+      ]
+    };
+  });
+  const regTable = attachTable('p-reg',
+    'Mean activation of the top flip-predicting feature, per paraphrase phenomenon.',
+    () => {
+      const run = SAE_RUNS[cur];
+      const keys = Object.keys(run.registers);
+      return {
+        cols: ['Register', 'Mean activation of feature ' + run.feature],
+        rows: keys.map(k => [PHEN_LABEL[k] || k, run.registers[k].toFixed(5)])
+      };
+    });
   document.querySelectorAll('#p-reg .chip').forEach(b=>{
     b.addEventListener('click', ()=>{
       document.querySelectorAll('#p-reg .chip').forEach(x=>x.setAttribute('aria-pressed','false'));
-      b.setAttribute('aria-pressed','true'); cur = b.dataset.reg; draw();
+      b.setAttribute('aria-pressed','true'); cur = b.dataset.reg; draw(); regTable.refresh();
     });
   });
   onTheme(draw); draw();
@@ -3095,14 +3580,16 @@ const SAE_RUNS = {
     }
     const mxb = Math.max(1, ...bins);
     const bw = pw/NB;
-    ctx.save(); ctx.fillStyle = C.grey; ctx.globalAlpha = 0.8;
-    bins.forEach((v,i)=>{ const h=v/mxb*(ph-18); ctx.fillRect(L+i*bw, T+ph-h, Math.max(1,bw-0.6), h); });
-    ctx.restore();
+    bins.forEach((v,i)=>{
+      const h=v/mxb*(ph-18);
+      if(h>0) barUp(ctx, L+i*bw+GAP/2, Math.max(1,bw-GAP), T+ph-h, T+ph, C.vmute, 3);
+    });
+    line(ctx, L, T+ph, L+pw, T+ph, C.vaxis, 1);
 
-    for(let g=0; g<=8; g++){
-      const v = g/8*hi;
-      line(ctx, px(v), T+ph, px(v), T+ph+4, C.rule, 1);
-      txt(ctx, v.toFixed(2), px(v), T+ph+17, {size:9.5, color:C.ink3, font:MONO, align:'center'});
+    const stx = niceStep(hi/8), tfx = tickFmt(stx);
+    for(let v=0; v <= hi + 1e-9; v += stx){
+      line(ctx, px(v), T+ph, px(v), T+ph+4, C.vaxis, 1);
+      txt(ctx, tfx(v), px(v), T+ph+17, {size:9.5, color:C.ink3, font:MONO, align:'center'});
     }
     txt(ctx,'|cos| between the flip direction and the best of m candidates',
         L+pw/2, T+ph+38, {size:11, color:C.ink2, align:'center'});
@@ -3122,29 +3609,61 @@ const SAE_RUNS = {
       txt(ctx, label, mv + (flip ? -6 : 6), T + (up?16:32),
           {size:10.5, color:color, weight:'600', align: flip ? 'right' : 'left'});
     }
-    line(ctx, px(cur.p95), T, px(cur.p95), T+ph, C.warn, 1.2, [4,3]);
-    txt(ctx,'95th pct '+fmt(cur.p95,3), px(cur.p95)+5, T+ph-10, {size:10, color:C.warn});
+    line(ctx, px(cur.p95), T, px(cur.p95), T+ph, C.ink2, 1.2, [4,3]);
+    txt(ctx,'95th pct  '+fmt(cur.p95,3), px(cur.p95)+6, T+13,
+        {size:10, color:C.ink2, weight:'600'});
     if(Math.abs(cur.d-384) < 40){
-      marker(0.7370, C.blue, 'SAE best-of-2048  0.737', true);
-      marker(0.5193, C.amber, 'PCA best-of-20  0.519', false);
+      marker(0.7370, C.v1, 'SAE best-of-2048  0.737', true);
+      marker(0.5193, C.v2, 'PCA best-of-20  0.519', false);
     }
-    // asymptotic
-    const asym = Math.sqrt(2*Math.log(2*cur.m)/cur.d);
-    if(asym <= hi){
-      line(ctx, px(asym), T+ph*0.05, px(asym), T+ph, C.ink3, 1, [2,3]);
-      txt(ctx,'√(2 ln 2m / d)', px(asym)+4, T+ph*0.05+10, {size:9.5, color:C.ink3});
-    }
+
   }
+  attachTip(c, (x,y) => {
+    if(!cur) return null;
+    const L = 56, R = 30, T = 32, B = 56;
+    const pw = c.W-L-R, ph = c.H-T-B;
+    if(x < L || x > L+pw || y < T || y > T+ph) return null;
+    const hi = Math.max(0.82, cur.p99*1.35);
+    const v = (x-L)/pw*hi;
+    let lo2 = 0, hi2 = cur.s.length;
+    while(lo2 < hi2){ const mid = (lo2+hi2)>>1; if(cur.s[mid] < v) lo2 = mid+1; else hi2 = mid; }
+    const frac = lo2/cur.s.length;
+    return {
+      title: '|cos| = ' + v.toFixed(3),
+      x: x, y: T + 6,
+      rows: [
+        {value: (frac*100).toFixed(1) + '%', label: 'of null draws fall below', color: C.vmute},
+        {value: ((1-frac)*100).toFixed(2) + '%', label: 'reach at least this far'}
+      ]
+    };
+  });
+  const nlTable = attachTable('p-null',
+    'Monte-Carlo null for the maximum |cos| over m candidate directions in d dimensions.',
+    () => cur ? ({
+      cols: ['Statistic', 'Value'],
+      rows: [
+        ['dimension d', cur.d],
+        ['candidates m', cur.m.toLocaleString()],
+        ['null mean', cur.mean.toFixed(4)],
+        ['null 50th pct', quantile(cur.s, 0.5).toFixed(4)],
+        ['null 95th pct', cur.p95.toFixed(4)],
+        ['null 99th pct', cur.p99.toFixed(4)],
+        ['closed form √(2 ln 2m / d)', Math.sqrt(2*Math.log(2*cur.m)/cur.d).toFixed(4)],
+        ['observed — SAE best of 2048', '0.7370'],
+        ['observed — PCA best of 20', '0.5193']
+      ]
+    }) : {cols:['Statistic','Value'], rows:[['—','—']]});
+
   // building a fresh 200k base sample for a new d costs ~100ms, so dragging the
   // dimension slider must not recompute on every input event
-  const recompute = debounce(()=>{ compute(); draw(); }, 130);
+  const recompute = debounce(()=>{ compute(); draw(); nlTable.refresh(); }, 130);
   document.getElementById('nl-d').addEventListener('input', ()=>{
     el('nl-d-v').textContent = el('nl-d').value; recompute();
   });
   document.getElementById('nl-trials').addEventListener('input', ()=>{
     el('nl-trials-v').textContent = (+el('nl-trials').value).toLocaleString(); recompute();
   });
-  document.getElementById('nl-m').addEventListener('input', ()=>{ compute(); draw(); });
+  document.getElementById('nl-m').addEventListener('input', ()=>{ compute(); draw(); nlTable.refresh(); });
   onTheme(draw);
   compute(); draw();
 })();
@@ -3173,10 +3692,12 @@ const SAE_RUNS = {
     const run = SAE_RUNS[cur];
     const N = nulls();
     const showNull = document.getElementById('cmp-null').checked;
+    // three nominal categories on one measure: one series, slot 1 for every bar.
+    // the chance ceiling is a reference threshold, not a second series.
     const bars = [
-      {label:'SAE feature', sub:'best of 2048', v:Math.abs(run.bestCos.cos), color:C.blue, nullV:N.m2048, nullP:N.p2048},
-      {label:'PCA', sub:'best of top 20', v:run.pca20, color:C.amber, nullV:N.m20, nullP:N.p20},
-      {label:'Random direction', sub:'mean of one', v:run.randMean, color:C.grey, nullV:N.m1, nullP:null}
+      {label:'SAE feature', sub:'best of 2048', v:Math.abs(run.bestCos.cos), nullP:N.p2048},
+      {label:'PCA', sub:'best of top 20', v:run.pca20, nullP:N.p20},
+      {label:'Random direction', sub:'mean of one', v:run.randMean, nullP:null}
     ];
     const L = 70, R = 34, T = 34, B = 62;
     const pw = W-L-R, ph = H-T-B;
@@ -3186,36 +3707,67 @@ const SAE_RUNS = {
     const hi = 1.0;
     for(let g=0;g<=5;g++){
       const yy = T+ph-g/5*ph;
-      line(ctx, L, yy, L+pw, yy, C.ruleSoft, 1);
-      txt(ctx,(g/5).toFixed(1), L-6, yy+3, {size:9.5, color:C.ink3, font:MONO, align:'right'});
+      if(g) grid(ctx, L, yy, L+pw, yy);
+      txt(ctx,(g/5).toFixed(1), L-7, yy+3.5, {size:9.5, color:C.ink3, font:MONO, align:'right'});
     }
+    line(ctx, L, T+ph, L+pw, T+ph, C.vaxis, 1);
     const bw = pw/bars.length;
     bars.forEach((b,i)=>{
       const cx = L + i*bw + bw/2;
-      const w = bw*0.42;
+      const w = Math.min(24, bw*0.3);
       const h = b.v/hi*ph;
       if(showNull && b.nullP != null){
         const nh = b.nullP/hi*ph;
-        ctx.save(); ctx.fillStyle = C.grey; ctx.globalAlpha=0.28;
-        ctx.fillRect(cx-w/2-10, T+ph-nh, w+20, nh); ctx.restore();
-        line(ctx, cx-w/2-10, T+ph-nh, cx+w/2+10, T+ph-nh, C.warn, 1.4, [4,3]);
-        txt(ctx,'chance ceiling '+fmt(b.nullP,2), cx, T+ph-nh-6, {size:9.5, color:C.warn, align:'center', font:MONO});
+        line(ctx, cx-w/2-18, T+ph-nh, cx+w/2+18, T+ph-nh, C.ink2, 1.4, [4,3]);
+        txt(ctx,'chance '+fmt(b.nullP,2), cx+w/2+22, T+ph-nh+3.5,
+            {size:9.5, color:C.ink2, font:MONO});
       }
-      ctx.fillStyle = b.color;
-      ctx.fillRect(cx-w/2, T+ph-h, w, h);
-      txt(ctx, b.v.toFixed(3), cx, T+ph-h-(showNull && b.nullP != null && b.nullP>b.v ? 20 : 8),
-          {size:13, color:b.color, align:'center', font:MONO, weight:'600'});
+      barUp(ctx, cx-w/2, w, T+ph-h, T+ph, C.v1);
+      txt(ctx, b.v.toFixed(3), cx, T+ph-h-9,
+          {size:13, color:C.ink, align:'center', font:MONO, weight:'600'});
       txt(ctx, b.label, cx, T+ph+18, {size:11.5, color:C.ink, align:'center'});
       txt(ctx, b.sub, cx, T+ph+32, {size:10, color:C.ink3, align:'center'});
     });
     if(showNull)
-      txt(ctx,'shaded = 95th percentile of what that selection procedure reaches on pure noise',
+      txt(ctx,'dashed = 95th percentile of what that selection procedure reaches on pure noise',
           L+pw/2, T+ph+50, {size:10.5, color:C.ink3, align:'center'});
   }
+  attachTip(c, (x,y) => {
+    const run = SAE_RUNS[cur], N = nulls();
+    const rows = [
+      ['SAE feature', Math.abs(run.bestCos.cos), N.p2048, 'best of 2048 dictionary columns', run.bestCos.feature],
+      ['PCA', run.pca20, N.p20, 'best of the top 20 components', null],
+      ['Random direction', run.randMean, null, 'mean of 200 single draws', null]
+    ];
+    const L = 70, R = 34, T = 34, B = 62;
+    const pw = c.W-L-R, ph = c.H-T-B;
+    if(x < L || x > L+pw || y < T || y > T+ph+34) return null;
+    const bw = pw/3;
+    const i = Math.min(2, Math.max(0, Math.floor((x-L)/bw)));
+    const r = rows[i];
+    const out = [{value: r[1].toFixed(3), label: '|cos| with the flip direction', color: C.v1}];
+    if(r[2] != null) out.push({value: r[2].toFixed(3), label: 'chance ceiling (95th pct)'});
+    if(r[4] != null) out.push({value: '#' + r[4], label: 'feature'});
+    out.push({value: r[3], label: ''});
+    return {title: r[0], x: L + i*bw + bw/2, y: T + ph - (r[1])*ph, rows: out};
+  });
+  const cmpTable = attachTable('p-compare',
+    'Alignment with the causal flip direction, against the chance level of each selection procedure.',
+    () => {
+      const run = SAE_RUNS[cur], N = nulls();
+      return {
+        cols: ['Selection procedure', 'Observed |cos|', 'Chance mean', 'Chance 95th pct'],
+        rows: [
+          ['SAE — best of 2048', Math.abs(run.bestCos.cos).toFixed(3), N.m2048.toFixed(3), N.p2048.toFixed(3)],
+          ['PCA — best of top 20', run.pca20.toFixed(3), N.m20.toFixed(3), N.p20.toFixed(3)],
+          ['Random — mean of one', run.randMean.toFixed(4), N.m1.toFixed(3), '—']
+        ]
+      };
+    });
   document.querySelectorAll('#p-compare .chip').forEach(b=>{
     b.addEventListener('click', ()=>{
       document.querySelectorAll('#p-compare .chip').forEach(x=>x.setAttribute('aria-pressed','false'));
-      b.setAttribute('aria-pressed','true'); cur = b.dataset.run; draw();
+      b.setAttribute('aria-pressed','true'); cur = b.dataset.run; draw(); cmpTable.refresh();
     });
   });
   document.getElementById('cmp-null').addEventListener('change', draw);
