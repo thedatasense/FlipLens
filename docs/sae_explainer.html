@@ -1,0 +1,3412 @@
+<title>Sparse Autoencoders, for FlipLens</title>
+
+<style>
+/* ============================================================
+   Design tokens — light is the base; dark redefines tokens only.
+   Palette follows the repo's own figures: blue = model / SAE feature,
+   amber = the causal flip direction (experiment C), grey = baselines.
+   ============================================================ */
+:root{
+  --bg:#E9EDEF;
+  --panel:#FFFFFF;
+  --panel-2:#F2F5F7;
+  --sunk:#E4EAED;
+  --rule:#C4CFD4;
+  --rule-soft:#DCE3E7;
+  --ink:#0C1418;
+  --ink-2:#48595F;
+  --ink-3:#5A6C74;
+  --on-accent:#FFFFFF;
+  --blue:#0A6C9E;
+  --blue-2:#0E86C4;
+  --blue-wash:#DCEAF3;
+  --amber:#B0510D;
+  --amber-2:#D2701F;
+  --amber-wash:#F7E7D7;
+  --grey:#8B9BA3;
+  --warn:#98281D;
+  --warn-wash:#F6E1DE;
+  --ok:#1A705C;
+  --shadow:0 1px 2px rgba(12,20,24,.06), 0 8px 24px -12px rgba(12,20,24,.18);
+  --glow:radial-gradient(120% 80% at 50% 0%, rgba(255,255,255,.9) 0%, rgba(255,255,255,0) 70%);
+
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua","Source Serif 4",Georgia,"Times New Roman",serif;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+
+  --measure:69ch;
+  --bleed:250px;
+  --wide:1120px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0A1115;
+    --panel:#111A1F;
+    --panel-2:#152128;
+    --sunk:#0D161B;
+    --rule:#26343B;
+    --rule-soft:#1C282E;
+    --ink:#E2EBEF;
+    --ink-2:#9AACB5;
+    --ink-3:#7D919D;
+    --on-accent:#08141A;
+    --blue:#59AEDE;
+    --blue-2:#7CC4EC;
+    --blue-wash:#10303F;
+    --amber:#E88C40;
+    --amber-2:#F2A868;
+    --amber-wash:#38230F;
+    --grey:#788992;
+    --warn:#E88170;
+    --warn-wash:#37201C;
+    --ok:#4CBFA3;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+    --glow:radial-gradient(120% 80% at 50% 0%, rgba(120,180,215,.07) 0%, rgba(120,180,215,0) 70%);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0A1115;
+  --panel:#111A1F;
+  --panel-2:#152128;
+  --sunk:#0D161B;
+  --rule:#26343B;
+  --rule-soft:#1C282E;
+  --ink:#E2EBEF;
+  --ink-2:#9AACB5;
+  --ink-3:#7D919D;
+  --on-accent:#08141A;
+  --blue:#59AEDE;
+  --blue-2:#7CC4EC;
+  --blue-wash:#10303F;
+  --amber:#E88C40;
+  --amber-2:#F2A868;
+  --amber-wash:#38230F;
+  --grey:#788992;
+  --warn:#E88170;
+  --warn-wash:#37201C;
+  --ok:#4CBFA3;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+  --glow:radial-gradient(120% 80% at 50% 0%, rgba(120,180,215,.07) 0%, rgba(120,180,215,0) 70%);
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--serif);
+  font-size:17.5px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+
+/* ---------- reading column, with a measured breakout ----------
+   Sections are ordinary blocks inside the text column, so .wide cannot be a grid
+   placement — it is a symmetric negative margin, enabled only at a width where the
+   grid is guaranteed to have both bleed columns at their full --bleed. */
+.page{
+  display:grid;
+  /* the gutter is page padding, not a track: inside the grid, 100% resolves against
+     the content box, so min(--measure, 100%) can never exceed the space available */
+  padding-inline:1.1rem;
+  grid-template-columns:
+    [full-start] minmax(0,1fr)
+    [wide-start] minmax(0,var(--bleed))
+    [text-start] min(var(--measure),100%)
+    [text-end] minmax(0,var(--bleed))
+    [wide-end] minmax(0,1fr)
+    [full-end];
+  row-gap:0;
+}
+.page > *{grid-column:text}
+/* the .wide breakout itself is declared at the END of this stylesheet: .panel and
+   .tbl-wrap set `margin` shorthands, and at equal specificity the later rule wins. */
+
+/* ---------- top bar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:40;
+  background:var(--bg);
+  background:color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter:saturate(1.4) blur(10px);
+  border-bottom:1px solid var(--rule-soft);
+}
+@supports not (backdrop-filter: blur(2px)){ .topbar{background:var(--bg)} }
+.topbar-in{
+  max-width:var(--wide);margin:0 auto;padding:.5rem 1.1rem;
+  display:flex;align-items:center;gap:1rem;
+}
+.brand{
+  font-family:var(--sans);font-size:11px;font-weight:650;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-2);white-space:nowrap;
+}
+.brand b{color:var(--blue);font-weight:700}
+.jump{
+  margin-left:auto;display:flex;gap:.15rem;overflow-x:auto;scrollbar-width:none;
+}
+.jump::-webkit-scrollbar{display:none}
+.jump a{
+  font-family:var(--sans);font-size:11px;letter-spacing:.05em;color:var(--ink-3);
+  text-decoration:none;padding:.3rem .45rem;border-radius:4px;white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+}
+.jump a:hover{color:var(--ink);background:var(--panel-2)}
+.progress{height:2px;background:var(--blue);width:0%;transition:width .1s linear}
+@media (max-width:820px){.jump{display:none}}
+
+/* ---------- masthead ---------- */
+.masthead{padding:4.5rem 0 1.2rem}
+.eyebrow{
+  font-family:var(--sans);font-size:11px;font-weight:650;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-3);margin:0 0 1.1rem;
+}
+h1{
+  font-family:var(--serif);font-weight:600;font-size:clamp(2.3rem,6.2vw,3.5rem);
+  line-height:1.03;letter-spacing:-.018em;margin:0 0 1rem;text-wrap:balance;
+}
+h1 em{font-style:italic;color:var(--blue)}
+.standfirst{
+  font-size:1.16rem;line-height:1.55;color:var(--ink-2);margin:0 0 1.8rem;
+  text-wrap:pretty;
+}
+.byline{
+  font-family:var(--sans);font-size:12px;color:var(--ink-3);
+  border-top:1px solid var(--rule-soft);padding-top:.9rem;
+  display:flex;flex-wrap:wrap;gap:.4rem 1.2rem;
+}
+.byline code{font-size:11.5px}
+
+/* ---------- sections ---------- */
+section{padding:2.4rem 0 .6rem;scroll-margin-top:70px}
+h2{
+  font-family:var(--serif);font-weight:600;font-size:clamp(1.5rem,3.6vw,2.05rem);
+  line-height:1.14;letter-spacing:-.012em;margin:.2rem 0 .5rem;text-wrap:balance;
+}
+h3{
+  font-family:var(--serif);font-weight:600;font-size:1.16rem;line-height:1.3;
+  margin:2rem 0 .5rem;text-wrap:balance;
+}
+h4{
+  font-family:var(--sans);font-weight:650;font-size:12px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--ink-3);margin:1.5rem 0 .5rem;
+}
+.snum{
+  font-family:var(--sans);font-size:11px;font-weight:650;letter-spacing:.14em;
+  color:var(--blue);display:block;margin-bottom:.55rem;
+  font-variant-numeric:tabular-nums;
+}
+p{margin:0 0 1.05rem;text-wrap:pretty}
+a{color:var(--blue);text-underline-offset:.18em;text-decoration-thickness:1px}
+a:hover{color:var(--blue-2)}
+strong{font-weight:650}
+em{font-style:italic}
+code,kbd{font-family:var(--mono);font-size:.855em;font-variant-ligatures:none}
+p code,li code,td code,th code{
+  background:var(--panel-2);border:1px solid var(--rule-soft);
+  padding:.06em .32em;border-radius:3px;white-space:nowrap;
+}
+ul,ol{margin:0 0 1.05rem;padding-left:1.35rem}
+li{margin:.32rem 0}
+li::marker{color:var(--ink-3)}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+.lede{font-size:1.06rem;color:var(--ink-2)}
+.small{font-size:.9rem;color:var(--ink-2)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.k-amber{color:var(--amber)}
+.k-grey{color:var(--ink-3)}
+
+/* ---------- panels ---------- */
+.panel{
+  background:var(--panel);
+  border:1px solid var(--rule);
+  border-radius:6px;
+  box-shadow:var(--shadow);
+  margin:1.6rem 0;
+  overflow:hidden;
+  position:relative;
+}
+.panel::before{
+  content:"";position:absolute;inset:0;background:var(--glow);pointer-events:none;
+}
+.panel > *{position:relative}
+.panel-head{
+  display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;
+  padding:.75rem 1.05rem;border-bottom:1px solid var(--rule-soft);
+  background:var(--panel-2);
+}
+.panel-title{
+  font-family:var(--sans);font-size:11.5px;font-weight:650;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-2);
+}
+.panel-sub{font-family:var(--sans);font-size:11.5px;color:var(--ink-3);margin-left:auto}
+.panel-body{padding:1.05rem}
+.panel-foot{
+  padding:.7rem 1.05rem;border-top:1px solid var(--rule-soft);
+  font-family:var(--sans);font-size:12.5px;line-height:1.5;color:var(--ink-2);
+  background:var(--panel-2);
+}
+
+/* ---------- controls ---------- */
+.ctrls{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));
+  gap:.75rem 1.1rem;margin:0 0 1rem;
+}
+.ctrl{display:flex;flex-direction:column;gap:.22rem}
+.ctrl label{
+  font-family:var(--sans);font-size:10.5px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-3);display:flex;justify-content:space-between;gap:.5rem;
+}
+.ctrl label output{
+  font-family:var(--mono);font-size:11px;color:var(--ink);letter-spacing:0;
+  font-variant-numeric:tabular-nums;text-transform:none;
+}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;cursor:pointer;margin:0;
+}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--rule);border-radius:2px}
+input[type=range]::-moz-range-track{height:3px;background:var(--rule);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--blue);
+  margin-top:-7.5px;border:2px solid var(--panel);box-shadow:0 0 0 1px var(--blue);
+}
+input[type=range]::-moz-range-thumb{
+  width:14px;height:14px;border-radius:50%;background:var(--blue);
+  border:2px solid var(--panel);box-shadow:0 0 0 1px var(--blue);
+}
+.btn{
+  font-family:var(--sans);font-size:12.5px;font-weight:600;letter-spacing:.01em;
+  padding:.42rem .85rem;border-radius:4px;border:1px solid var(--rule);
+  background:var(--panel-2);color:var(--ink);cursor:pointer;
+}
+.btn:hover{border-color:var(--blue);color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--on-accent)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn[aria-pressed=true]{background:var(--blue-wash);border-color:var(--blue);color:var(--blue)}
+.btnrow{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center}
+select{
+  font-family:var(--sans);font-size:12.5px;padding:.36rem .5rem;border-radius:4px;
+  border:1px solid var(--rule);background:var(--panel-2);color:var(--ink);
+}
+.chips{display:flex;gap:.3rem;flex-wrap:wrap}
+.chip{
+  font-family:var(--sans);font-size:11.5px;padding:.28rem .6rem;border-radius:99px;
+  border:1px solid var(--rule);background:var(--panel-2);color:var(--ink-2);cursor:pointer;
+}
+.chip[aria-pressed=true]{background:var(--blue);border-color:var(--blue);color:var(--panel)}
+.switch{
+  display:inline-flex;align-items:center;gap:.45rem;font-family:var(--sans);font-size:12px;
+  color:var(--ink-2);cursor:pointer;
+}
+/* `.ctrl label` (0,1,1) would otherwise win over `.switch` (0,1,0) */
+.ctrl label.switch{
+  display:inline-flex;justify-content:flex-start;text-transform:none;
+  letter-spacing:0;font-size:12px;font-weight:400;color:var(--ink-2);
+}
+.switch input{accent-color:var(--blue);width:15px;height:15px}
+
+/* ---------- readouts ---------- */
+.stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
+  gap:1px;background:var(--rule-soft);border:1px solid var(--rule-soft);border-radius:4px;overflow:hidden;
+}
+.stat{background:var(--panel);padding:.6rem .7rem}
+.stat .lbl{
+  font-family:var(--sans);font-size:9.5px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-3);display:block;margin-bottom:.15rem;
+}
+.stat .val{
+  font-family:var(--mono);font-size:1.02rem;font-variant-numeric:tabular-nums;
+  color:var(--ink);display:block;line-height:1.2;
+}
+.stat .val.b{color:var(--blue)}
+.stat .val.a{color:var(--amber)}
+.stat .val.w{color:var(--warn)}
+.stat .sub{font-family:var(--sans);font-size:10px;color:var(--ink-3)}
+
+canvas{display:block;max-width:100%}
+.canvas-wrap{overflow-x:auto;border-radius:4px;background:var(--sunk);border:1px solid var(--rule-soft)}
+.canvas-wrap canvas{margin:0 auto}
+
+/* ---------- code ---------- */
+.code{
+  background:var(--sunk);border:1px solid var(--rule-soft);border-radius:5px;
+  overflow:hidden;margin:1.2rem 0;
+}
+.code-head{
+  font-family:var(--sans);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);padding:.5rem .85rem;border-bottom:1px solid var(--rule-soft);
+  display:flex;justify-content:space-between;gap:1rem;
+}
+pre{margin:0;padding:.85rem;font-family:var(--mono);font-size:12.5px;line-height:1.62;overflow-x:auto}
+pre code{background:none;border:0;padding:0;white-space:pre}
+.c-kw{color:var(--amber)}
+.c-fn{color:var(--blue)}
+.c-str{color:var(--ok)}
+.c-com{color:var(--ink-3);font-style:italic}
+.c-num{color:var(--blue-2)}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;margin:1.3rem 0;border:1px solid var(--rule-soft);border-radius:5px}
+table{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:13px}
+th,td{padding:.5rem .7rem;text-align:left;border-bottom:1px solid var(--rule-soft);white-space:nowrap}
+thead th{
+  font-size:10.5px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--ink-3);background:var(--panel-2);
+}
+tbody tr:last-child td{border-bottom:0}
+td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+tbody tr:hover{background:var(--panel-2)}
+.hi{color:var(--blue);font-weight:650}
+.lo{color:var(--warn)}
+
+/* ---------- callouts ---------- */
+.note{
+  border-left:2px solid var(--blue);background:var(--blue-wash);
+  padding:.85rem 1rem;border-radius:0 4px 4px 0;margin:1.4rem 0;font-size:.95rem;
+}
+.note.caution{border-left-color:var(--warn);background:var(--warn-wash)}
+.note.finding{border-left-color:var(--amber);background:var(--amber-wash)}
+.note p:last-child{margin-bottom:0}
+.note .tag{
+  font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  display:block;margin-bottom:.35rem;color:var(--blue);
+}
+.note.caution .tag{color:var(--warn)}
+.note.finding .tag{color:var(--amber)}
+
+/* ---------- figures ---------- */
+figure{margin:1.6rem 0}
+figure svg{min-width:560px;max-width:100%;height:auto;display:block;margin:0 auto;color:var(--ink-2)}
+figcaption{
+  font-family:var(--sans);font-size:12px;line-height:1.5;color:var(--ink-3);
+  margin-top:.6rem;text-align:center;text-wrap:pretty;
+}
+.fig-wrap{overflow-x:auto}
+/* the section-02 diagram takes its accent from the palette, not a literal */
+.dg-a-f{fill:var(--blue)}
+.dg-a-s{stroke:var(--blue)}
+.dg-a-t{fill:var(--blue)}
+.dg-on{fill:var(--on-accent)}
+
+/* ---------- misc ---------- */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem}
+@media (max-width:700px){.two{grid-template-columns:1fr}}
+.legend{
+  display:flex;gap:1rem;flex-wrap:wrap;font-family:var(--sans);font-size:11.5px;
+  color:var(--ink-2);margin-top:.6rem;
+}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:.35rem;vertical-align:-1px}
+.kbd{
+  font-family:var(--sans);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-3);border:1px solid var(--rule);border-radius:3px;padding:.1rem .3rem;
+}
+footer{
+  padding:3rem 0 4rem;margin-top:2rem;border-top:1px solid var(--rule-soft);
+  font-family:var(--sans);font-size:12.5px;color:var(--ink-3);
+}
+footer a{color:var(--ink-2)}
+.tocard{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1px;
+  background:var(--rule-soft);border:1px solid var(--rule-soft);border-radius:5px;overflow:hidden;margin:1.8rem 0 0;
+}
+.tocard a{
+  background:var(--panel);padding:.7rem .85rem;text-decoration:none;display:block;
+}
+.tocard a:hover{background:var(--panel-2)}
+.tocard .n{
+  font-family:var(--sans);font-size:10px;font-weight:650;letter-spacing:.12em;color:var(--blue);
+  display:block;font-variant-numeric:tabular-nums;
+}
+.tocard .t{font-family:var(--serif);font-size:.95rem;color:var(--ink);display:block;line-height:1.3;margin-top:.15rem}
+.tocard .d{font-family:var(--sans);font-size:11px;color:var(--ink-3);display:block;margin-top:.2rem;line-height:1.35}
+
+/* ---------- caveat accordion ---------- */
+#cav-body details:last-child{border-bottom:0 !important}
+#cav-body summary::-webkit-details-marker{display:none}
+#cav-body summary::marker{content:""}
+#cav-body summary::before{
+  content:"+";font-family:var(--mono);color:var(--ink-3);font-size:13px;line-height:1;
+}
+#cav-body details[open] summary::before{content:"−"}
+#cav-body summary:hover{background:var(--panel-2)}
+#cav-body details[open] summary{color:var(--blue)}
+#cav-body pre{font-size:12px}
+#cav-body p{margin-bottom:.7rem}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms !important;transition-duration:.001ms !important}
+  html{scroll-behavior:auto}
+}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+
+/* ---------- the breakout, last so it beats the margin shorthands above ----------
+   Sections are plain blocks inside the text column, so .wide cannot be a grid
+   placement. At >=1200px both bleed tracks are guaranteed to sit at their full
+   --bleed, so a symmetric negative margin lands exactly on the wide-start /
+   wide-end lines. Below that the element simply fills the reading column and its
+   contents scroll inside .canvas-wrap / .tbl-wrap. */
+.wide{margin-left:0;margin-right:0}
+@media (min-width:1200px){
+  .wide{
+    margin-left:calc(-1 * var(--bleed));
+    margin-right:calc(-1 * var(--bleed));
+  }
+}
+</style>
+
+<div class="topbar">
+  <div class="topbar-in">
+    <span class="brand"><b>FlipLens</b> &nbsp;/&nbsp; sparse autoencoders</span>
+    <nav class="jump" aria-label="Sections">
+      <a href="#s1">01 Superposition</a>
+      <a href="#s2">02 The data</a>
+      <a href="#s3">03 Forward pass</a>
+      <a href="#s4">04 Train one</a>
+      <a href="#s5">05 Frontier</a>
+      <a href="#s6">06 Reading it</a>
+      <a href="#s7">07 The null</a>
+      <a href="#s8">08 Our results</a>
+      <a href="#s9">09 Caveats</a>
+      <a href="#s10">10 Run it</a>
+    </nav>
+  </div>
+  <div class="progress" id="progress"></div>
+</div>
+
+<div class="page">
+
+<header class="masthead">
+  <p class="eyebrow">An interactive primer, built on <code>scripts/experiments/sae.py</code></p>
+  <h1>Sparse autoencoders, <em>as you actually use them</em></h1>
+  <p class="standfirst">
+    Your SAE reads one 384-dimensional vector per question — the layer-1 residual stream at
+    the answer position — and asks whether an unsupervised decomposition of it rediscovers
+    the flip direction that experiment C found by supervised difference-of-means. This page
+    teaches everything that sentence contains, from superposition to the statistics of the
+    claim, with a real top-<i>k</i> SAE you can train in this tab.
+  </p>
+  <p class="byline">
+    <span>Everything numbered <span class="num">01</span>&ndash;<span class="num">10</span> is interactive.</span>
+    <span>Grounded in <code>results/sae/</code>, <code>results_gemma/sae_gemma/</code>, <code>results_transfer/sae/</code>.</span>
+  </p>
+
+  <div class="tocard">
+    <a href="#s1"><span class="n">01</span><span class="t">Why a dictionary at all</span><span class="d">Superposition: more features than dimensions</span></a>
+    <a href="#s2"><span class="n">02</span><span class="t">What one row of X is</span><span class="d">Capture at the answer position</span></a>
+    <a href="#s3"><span class="n">03</span><span class="t">The top-k forward pass</span><span class="d">Your TopKSAE, one vector at a time</span></a>
+    <a href="#s4"><span class="n">04</span><span class="t">Train one, live</span><span class="d">Your exact recipe, watch it recover features</span></a>
+    <a href="#s5"><span class="n">05</span><span class="t">Sparsity vs fidelity</span><span class="d">The frontier k and m trade on</span></a>
+    <a href="#s6"><span class="n">06</span><span class="t">Reading a feature</span><span class="d">Fires on / points at / predicts</span></a>
+    <a href="#s7"><span class="n">07</span><span class="t">The null you need</span><span class="d">Best-of-2048 is not best-of-one</span></a>
+    <a href="#s8"><span class="n">08</span><span class="t">What your runs found</span><span class="d">Three JSONs, read honestly</span></a>
+    <a href="#s9"><span class="n">09</span><span class="t">Eleven caveats</span><span class="d">And the fix for each</span></a>
+    <a href="#s10"><span class="n">10</span><span class="t">Run and extend it</span><span class="d">Commands, and one bug in the way</span></a>
+  </div>
+</header>
+
+<!-- ============================ 01 ============================ -->
+<section id="s1">
+  <span class="snum">01 — Why a dictionary at all</span>
+  <h2>A 384-dimensional stream carrying far more than 384 things</h2>
+
+  <p class="lede">
+    The premise of every SAE is the <strong>linear representation hypothesis</strong>: a network
+    stores a concept as a direction in activation space, and the activation is roughly a sum of
+    the directions currently active. If that is true, and if the network tracks more concepts
+    than it has dimensions, the directions cannot be orthogonal. They are packed — in
+    <strong>superposition</strong> — and each individual neuron ends up responding to several
+    unrelated things at once.
+  </p>
+
+  <p>
+    The packing is possible because near-orthogonality is cheap in high dimensions. Two random
+    unit vectors in <span class="num">R<sup>384</sup></span> have an expected absolute cosine of
+    <span class="num">√(2/π·384) = 0.041</span>. You can fit exponentially many directions that
+    are all mutually near-orthogonal, so a model can afford thousands of features with only
+    slight interference between them — as long as few are active at once. That last clause is the
+    whole reason the autoencoder is <em>sparse</em>: sparsity is not a regularizer bolted on for
+    convenience, it is the assumption that makes the decomposition identifiable.
+  </p>
+
+  <div class="panel wide" id="p-superpos">
+    <div class="panel-head">
+      <span class="panel-title">Interactive — superposition in two dimensions</span>
+      <span class="panel-sub">drag the sliders; the geometry is exact</span>
+    </div>
+    <div class="panel-body">
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="sp-n">Features in the model <output id="sp-n-v" aria-live="off">6</output></label>
+          <input type="range" id="sp-n" min="2" max="14" step="1" value="6">
+        </div>
+        <div class="ctrl">
+          <label for="sp-active">Active at once <output id="sp-active-v" aria-live="off">1</output></label>
+          <input type="range" id="sp-active" min="1" max="3" step="1" value="1">
+        </div>
+        <div class="ctrl">
+          <label for="sp-noise">Interference noise <output id="sp-noise-v" aria-live="off">0.04</output></label>
+          <input type="range" id="sp-noise" min="0" max="30" step="1" value="4">
+        </div>
+      </div>
+      <div class="canvas-wrap"><canvas role="img" id="sp-canvas" width="1040" height="420" aria-label="Left: feature directions packed into two dimensions. Right: the activation of neuron 0, coloured by which feature caused it."></canvas></div>
+      <div class="legend">
+        <span><i style="background:var(--blue)"></i>feature directions</span>
+        <span><i style="background:var(--amber)"></i>sampled activations</span>
+        <span><i style="background:var(--grey)"></i>neuron axes</span>
+      </div>
+      <div class="stats" style="margin-top:1rem">
+        <div class="stat"><span class="lbl">Features / dims</span><span class="val b" id="sp-ratio">6 / 2</span><span class="sub">overcompleteness</span></div>
+        <div class="stat"><span class="lbl">Max |cos| pair</span><span class="val" id="sp-maxcos">0.87</span><span class="sub">worst interference</span></div>
+        <div class="stat"><span class="lbl">Neuron 0 purity</span><span class="val a" id="sp-purity">0.34</span><span class="sub">1.0 = monosemantic</span></div>
+      </div>
+    </div>
+    <div class="panel-foot">
+      Push <em>features</em> above 2 and the directions must share the plane. The histogram on the right is
+      the activation of a single neuron: once features outnumber dimensions, one neuron's firing no longer
+      identifies which feature fired — <strong>polysemanticity</strong>. A dictionary with more entries
+      than dimensions is how you undo that.
+    </div>
+  </div>
+
+  <h3>What the autoencoder is being asked to do</h3>
+  <p>
+    Given activations <span class="num">x ∈ R<sup>d</sup></span>, find an overcomplete dictionary
+    <span class="num">D ∈ R<sup>d×m</sup></span> with <span class="num">m ≫ d</span> and, for each
+    <span class="num">x</span>, a sparse non-negative code <span class="num">z</span> such that
+    <span class="num">x ≈ Dz</span>. The decoder columns are the <em>features</em> — the hypothesised
+    directions the model uses. The encoder is a learned <em>detector</em> that guesses which
+    columns are on. Nothing about this is specific to transformers; it is classical dictionary
+    learning, and the modern contribution is doing it at scale on residual streams with a
+    sparsity mechanism that trains stably.
+  </p>
+
+  <div class="note">
+    <span class="tag">Why this matters for FlipLens</span>
+    <p>
+      Experiment C found the flip direction <em>supervised</em>: mean(donor − target) over flipped
+      clusters. That is a difference-of-means probe, and a fair objection is that it only finds a
+      direction because you told it what to look for. The SAE never sees a flip label during
+      training. If a dictionary column learned purely by reconstruction lands on the same axis, the
+      axis is a property of the representation, not of your labelling. That is the entire argument
+      the corroboration section of the README is making.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ 02 ============================ -->
+<section id="s2">
+  <span class="snum">02 — The data matrix</span>
+  <h2>One question in, one 384-vector out</h2>
+
+  <p class="lede">
+    Before any autoencoder exists there is a matrix <span class="num">X</span>, and every design
+    decision about the SAE is downstream of what a row of it is. In <code>sae.py</code> a row is
+    <strong>the residual stream at one decoder layer, at the answer position, for one phrasing of
+    one question</strong>. Not a token average, not a pooled sentence vector — one position, one
+    layer.
+  </p>
+
+  <div class="fig-wrap">
+  <figure>
+    <svg viewBox="0 0 900 300" role="img" aria-label="The decoder sequence: an optional grounding token, then 256 image tokens, then the question tokens; the answer position is captured at layer 1 and becomes one row of the SAE training matrix.">
+      <defs>
+        <marker id="ar-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="dg-a-f" d="M 0 0 L 10 5 L 0 10 z"/>
+        </marker>
+      </defs>
+
+      <!-- sequence strip -->
+      <text x="10" y="28" font-family="ui-sans-serif,system-ui" font-size="11" fill="currentColor" letter-spacing="1.2">INPUT SEQUENCE (prefix fusion)</text>
+
+      <rect x="10" y="42" width="46" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+      <text x="33" y="63" font-family="ui-sans-serif,system-ui" font-size="10" text-anchor="middle" fill="currentColor">gnd</text>
+
+      <rect x="62" y="42" width="300" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+      <text x="212" y="63" font-family="ui-sans-serif,system-ui" font-size="11" text-anchor="middle" fill="currentColor">256 pooled MedSigLIP image tokens</text>
+
+      <rect x="368" y="42" width="230" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+      <text x="483" y="63" font-family="ui-sans-serif,system-ui" font-size="11" text-anchor="middle" fill="currentColor">question tokens (a paraphrase)</text>
+
+      <rect class="dg-a-f dg-a-s" x="604" y="42" width="52" height="34" rx="3" stroke-width="1.2"/>
+      <text class="dg-on" x="630" y="63" font-family="ui-sans-serif,system-ui" font-size="11" text-anchor="middle" font-weight="600">ANS</text>
+
+      <rect x="662" y="42" width="60" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="692" y="63" font-family="ui-sans-serif,system-ui" font-size="10" text-anchor="middle" fill="currentColor" opacity=".7">pad</text>
+
+      <text x="10" y="94" font-family="ui-monospace,monospace" font-size="9.5" fill="currentColor" opacity=".75">position 0</text>
+      <text class="dg-a-t" x="630" y="94" font-family="ui-monospace,monospace" font-size="9.5" text-anchor="middle">ans_pos + n_img</text>
+
+      <!-- decoder stack -->
+      <text x="10" y="132" font-family="ui-sans-serif,system-ui" font-size="11" fill="currentColor" letter-spacing="1.2">GEMMA-3 DECODER · 6 LAYERS</text>
+      <g>
+        <rect x="10" y="146" width="712" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1" opacity=".45"/>
+        <text x="734" y="160" font-family="ui-monospace,monospace" font-size="10" fill="currentColor" opacity=".6">layer 5</text>
+        <rect x="10" y="170" width="712" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1" opacity=".45"/>
+        <text x="734" y="184" font-family="ui-monospace,monospace" font-size="10" fill="currentColor" opacity=".6">…</text>
+        <rect class="dg-a-f dg-a-s" x="10" y="194" width="712" height="20" rx="2" fill-opacity=".14" stroke-width="1.4"/>
+        <text class="dg-a-t" x="734" y="208" font-family="ui-monospace,monospace" font-size="10" font-weight="600">layer 1</text>
+        <rect x="10" y="218" width="712" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1" opacity=".45"/>
+        <text x="734" y="232" font-family="ui-monospace,monospace" font-size="10" fill="currentColor" opacity=".6">layer 0</text>
+      </g>
+
+      <!-- capture arrow -->
+      <line class="dg-a-s" x1="630" y1="80" x2="630" y2="192" stroke-width="1.4" stroke-dasharray="4 3"/>
+      <line class="dg-a-s" x1="640" y1="204" x2="790" y2="204" stroke-width="1.4" marker-end="url(#ar-b)"/>
+      <text class="dg-a-t" x="715" y="197" font-family="ui-sans-serif,system-ui" font-size="10" text-anchor="middle">capture</text>
+
+      <!-- X matrix -->
+      <rect x="796" y="150" width="52" height="108" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+      <line class="dg-a-s" x1="796" y1="204" x2="848" y2="204" stroke-width="2"/>
+      <text x="822" y="145" font-family="ui-monospace,monospace" font-size="11" text-anchor="middle" fill="currentColor">X</text>
+      <text x="822" y="274" font-family="ui-sans-serif,system-ui" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".75">n × 384</text>
+
+      <text x="10" y="274" font-family="ui-sans-serif,system-ui" font-size="11" fill="currentColor" opacity=".8">one row per (question × paraphrase) evaluated</text>
+    </svg>
+    <figcaption>
+      <code>capture()</code> runs the eval set once with <code>capture=True</code>, indexes every layer's
+      hidden state at <code>ans_pos + model.n_img</code>, and stacks the layer-1 slice into <code>X</code>.
+      The prefix offset is 256 image tokens, plus 1 more when the grounding token is on.
+    </figcaption>
+  </figure>
+  </div>
+
+  <h3>Where <span class="num">d = 384</span> comes from</h3>
+  <p>
+    <code>train_model()</code> defaults to <code>dim=384, depth=6</code>, and
+    <code>BabyGemmaVLM</code> passes that straight to <code>Gemma3TextConfig(hidden_size=dim)</code>.
+    So the residual stream is 384-wide and there are 6 layers, indexed 0–5;
+    <code>--layer 1</code> is the second block. One cross-check falls out of that:
+    the SAE script's own random-direction baseline reports
+    <span class="num">0.0415 / 0.0428 / 0.0423</span> across your three runs, and
+    <span class="num">√(2/π·384) = 0.0407</span>. Be careful what that confirms — the identity
+    <span class="num">E|cos| = √(2/πd)</span> holds for <em>any</em> unit direction, so the agreement
+    verifies the dimension and nothing about the flip direction. It is a check that
+    <span class="num">d = 384</span>, not evidence about the capture. (It also means the baseline
+    carries no information: it is a closed-form constant that the script re-derives by simulation.)
+  </p>
+
+  <h3>The cluster, and what a flip is</h3>
+  <p>
+    Rows are grouped into <em>clusters</em>: one cluster is one image-and-finding question rendered
+    in every paraphrase in the bank. <code>make_eval_clusters</code> emits the original question
+    first and then each paraphrase, so a cluster is <strong>49 rows</strong>, not 48 — which is why
+    <code>original</code> appears as a register key in the output, and why the scaled run's 73,500
+    rows are exactly 1,500 clusters × 49. <code>flip_labels()</code> marks a cluster flipped when
+    <code>len(set(preds)) &gt; 1</code> — the model gave more than one answer to what is, by
+    construction, the same question. Because the vision encoder returns identical features for every
+    paraphrase in a cluster, the only thing that varies within a cluster is language. That is why a
+    flip localises to the decoder without needing to be measured.
+  </p>
+
+  <div class="panel wide" id="p-cluster">
+    <div class="panel-head">
+      <span class="panel-title">Interactive — one paraphrase cluster</span>
+      <span class="panel-sub">the real bank from <code>templates.py</code></span>
+    </div>
+    <div class="panel-body">
+      <div class="ctrls" style="grid-template-columns:1fr auto;align-items:end">
+        <div class="ctrl">
+          <label for="cl-finding">Finding</label>
+          <select id="cl-finding"></select>
+        </div>
+        <div class="ctrl">
+          <label class="switch" style="text-transform:none;letter-spacing:0;font-size:12px">
+            <input type="checkbox" id="cl-flip"> Show a flipped cluster
+          </label>
+        </div>
+      </div>
+      <div class="canvas-wrap" style="background:var(--panel)">
+        <div id="cl-list" style="padding:.2rem"></div>
+      </div>
+      <div class="stats" style="margin-top:1rem">
+        <div class="stat"><span class="lbl">Paraphrases</span><span class="val" id="cl-n">48</span><span class="sub">4 phenomena × 12</span></div>
+        <div class="stat"><span class="lbl">Distinct answers</span><span class="val" id="cl-ans">1</span><span class="sub">&gt;1 ⇒ flipped</span></div>
+        <div class="stat"><span class="lbl">Rows contributed to X</span><span class="val b" id="cl-rows">49</span><span class="sub">original + 48 paraphrases</span></div>
+      </div>
+    </div>
+    <div class="panel-foot">
+      The four phenomena — lexical substitution, syntactic restructuring, scope quantification,
+      specificity modulation — are meaning-preserving by construction. The negation variants in
+      <code>OPERATOR_VARIANTS</code> <em>invert</em> the answer and are deliberately kept out of
+      clusters; treating them as paraphrases is the mixed-question defect the design doc calls out.
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 03 ============================ -->
+<section id="s3">
+  <span class="snum">03 — The forward pass</span>
+  <h2>Encode, keep <span class="num">k</span>, decode</h2>
+
+  <p class="lede">
+    Your SAE is a <strong>top-<i>k</i></strong> autoencoder, which is the cleanest member of the
+    family: instead of penalising the code with an L1 term and tuning a coefficient until the
+    sparsity comes out where you want it, you simply keep the <span class="num">k</span> largest
+    pre-activations and zero the rest. <span class="num">L0</span> is then exactly
+    <span class="num">k</span> by construction, and there is no L1 shrinkage pulling every
+    surviving activation toward zero.
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>scripts/experiments/sae.py — lines 60&ndash;76</span><span>the whole model</span></div>
+<pre><code><span class="c-kw">class</span> <span class="c-fn">TopKSAE</span>(nn.Module):
+    <span class="c-kw">def</span> <span class="c-fn">__init__</span>(self, d, m, k):
+        super().__init__()
+        self.k = k
+        self.b_pre = nn.Parameter(torch.zeros(d))   <span class="c-com"># centering, shared in and out</span>
+        self.enc   = nn.Linear(d, m)                <span class="c-com"># the detector</span>
+        self.dec   = nn.Linear(m, d, bias=<span class="c-kw">False</span>)   <span class="c-com"># the dictionary, columns = features</span>
+
+    <span class="c-kw">def</span> <span class="c-fn">forward</span>(self, x):
+        z = self.enc(x - self.b_pre)
+        topv, topi = z.topk(self.k, dim=-<span class="c-num">1</span>)
+        zk = torch.zeros_like(z).scatter_(-<span class="c-num">1</span>, topi, F.relu(topv))
+        <span class="c-kw">return</span> self.dec(zk) + self.b_pre, zk
+
+    @torch.no_grad()
+    <span class="c-kw">def</span> <span class="c-fn">normalize_decoder</span>(self):
+        self.dec.weight.data = F.normalize(self.dec.weight.data, dim=<span class="c-num">0</span>)</code></pre>
+  </div>
+
+  <p>
+    Four details in there are load-bearing, and each is a decision you could have made differently:
+  </p>
+  <ul>
+    <li><strong><code>b_pre</code> is subtracted before the encoder and added back after the decoder.</strong>
+      It is a learned centre for the data cloud, so the dictionary has to explain only the
+      <em>variation</em> around it, not the mean. It also means <code>b_pre</code> receives gradient
+      from two paths, which matters if you ever hand-write the backward pass. One wrinkle in your
+      version: <code>train_sae</code> initialises it with <code>sae.b_pre.data = Xn.mean(0)</code>,
+      and <code>Xn</code> was per-dimension standardised two lines earlier, so that mean is zero by
+      construction — the initialisation is vestigial. It reads like the standard
+      "initialise the pre-bias to the data mean" practice, but the standardisation already did that
+      job, so <code>b_pre</code> starts at zeros either way.</li>
+    <li><strong>The decoder has no bias.</strong> If it did, it would compete with <code>b_pre</code>
+      for the same job and the decomposition would become non-identifiable.</li>
+    <li><strong>ReLU is applied <em>after</em> the top-<i>k</i> selection, not before.</strong>
+      Selection is by raw pre-activation value; a selected unit that happens to be negative
+      contributes nothing and receives no gradient. So the effective L0 is
+      <span class="num">≤ k</span>, not exactly <span class="num">k</span> — usually equal in
+      practice, but worth knowing.</li>
+    <li><strong>Decoder columns are normalized to unit norm.</strong> Without it, the network can
+      shrink a column and inflate its activation (or vice versa) with no change in output, so
+      "how strongly does feature <i>j</i> fire" would be meaningless, and so would any cosine you
+      compute against the column.</li>
+  </ul>
+
+  <div class="panel wide" id="p-forward">
+    <div class="panel-head">
+      <span class="panel-title">Interactive — one vector through the autoencoder</span>
+      <span class="panel-sub">d = 16, m = 32; click a bar &mdash; or focus the figure and press &larr; &rarr; &mdash; to see its dictionary column</span>
+    </div>
+    <div class="panel-body">
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="fw-k">k — features kept <output id="fw-k-v" aria-live="off">4</output></label>
+          <input type="range" id="fw-k" min="1" max="16" step="1" value="4">
+        </div>
+        <div class="ctrl">
+          <label for="fw-seed">Input vector <output id="fw-seed-v" aria-live="off">#3</output></label>
+          <input type="range" id="fw-seed" min="0" max="19" step="1" value="3">
+        </div>
+        <div class="ctrl" style="justify-content:end">
+          <label class="switch" style="text-transform:none;letter-spacing:0;font-size:12px">
+            <input type="checkbox" id="fw-relu" checked> Apply ReLU after top-k
+          </label>
+        </div>
+      </div>
+      <div class="canvas-wrap"><canvas role="img" tabindex="0" id="fw-canvas" width="1040" height="470" aria-label="The stages of a top-k sparse autoencoder forward pass: input vector, centred input, encoder pre-activations with the top k highlighted, the sparse code, and the reconstruction against the original."></canvas></div>
+      <div class="stats" style="margin-top:1rem">
+        <div class="stat"><span class="lbl">L0</span><span class="val b" id="fw-l0">4</span><span class="sub">non-zero code entries</span></div>
+        <div class="stat"><span class="lbl">MSE</span><span class="val" id="fw-mse">0.081</span><span class="sub">per element</span></div>
+        <div class="stat"><span class="lbl">Variance explained</span><span class="val" id="fw-ve">0.913</span><span class="sub">1 − MSE / var(x)</span></div>
+        <div class="stat"><span class="lbl">Compression</span><span class="val" id="fw-comp">4 / 16</span><span class="sub">k / d</span></div>
+      </div>
+    </div>
+    <div class="panel-foot">
+      Sweep <span class="kbd">k</span> from 1 to 16. Reconstruction improves monotonically and the
+      code stops being sparse; at <span class="num">k = d</span> the SAE is just a linear
+      autoencoder and has learned nothing about which directions are real. Every SAE decision is a
+      point on this trade — <a href="#s5">section 05</a> plots it.
+    </div>
+  </div>
+
+  <h3>The rest of the family, and why top-<i>k</i></h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr><th>Sparsity mechanism</th><th>How sparsity is set</th><th>Main cost</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>ReLU + L1 penalty</td><td>indirectly, via a coefficient you tune</td><td>shrinkage — L1 biases every active magnitude toward zero, so reconstruction is systematically under-scaled</td></tr>
+        <tr><td><strong>Top-<i>k</i></strong> <span class="hi">← yours</span></td><td>directly, L0 = k</td><td>a hard, non-differentiable selection; k is the same for every input, whether that input is simple or complex</td></tr>
+        <tr><td>BatchTopK</td><td>k on average across a batch</td><td>lets per-example L0 vary, but couples examples in a batch and needs a threshold at inference</td></tr>
+        <tr><td>JumpReLU</td><td>a learned per-feature threshold</td><td>needs a straight-through estimator for the step function</td></tr>
+        <tr><td>Gated SAE</td><td>separate "is it on" and "how much" paths</td><td>more parameters, more to go wrong</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    For your purpose — a corroboration run, not a dictionary you plan to publish — top-<i>k</i> is
+    the right call. It removes the single largest source of arbitrariness in an SAE result (the
+    sparsity coefficient), so nobody can ask whether you tuned <span class="num">λ</span> until the
+    flip feature appeared.
+  </p>
+</section>
+
+<!-- ============================ 04 ============================ -->
+<section id="s4">
+  <span class="snum">04 — Train one</span>
+  <h2>Your exact recipe, running in this tab</h2>
+
+  <p class="lede">
+    Below is a real top-<i>k</i> SAE — hand-written gradients, Adam with PyTorch's defaults,
+    decoder renormalised every 500 steps — trained on synthetic activations whose ground-truth
+    dictionary is known. That last part is the point: on your real residual stream you cannot check
+    whether the recovered features are the right ones, because there is no answer key. Here there
+    is, so you can watch what "good" and "broken" look like and learn to recognise them.
+  </p>
+
+  <div class="two">
+    <div class="code" style="margin-top:0">
+      <div class="code-head"><span>sae.py — train_sae</span><span>PyTorch</span></div>
+<pre><code>X = acts.to(device)
+mu, sd = X.mean(<span class="c-num">0</span>), X.std(<span class="c-num">0</span>) + <span class="c-num">1e-6</span>
+Xn = (X - mu) / sd
+sae = TopKSAE(d, m, k)
+sae.b_pre.data = Xn.mean(<span class="c-num">0</span>).clone()
+opt = torch.optim.Adam(sae.parameters(), lr=<span class="c-num">1e-3</span>)
+<span class="c-kw">for</span> step <span class="c-kw">in</span> range(<span class="c-num">3000</span>):
+    gidx = torch.randint(<span class="c-num">0</span>, n, (<span class="c-num">512</span>,))
+    recon, _ = sae(Xn[gidx])
+    loss = F.mse_loss(recon, Xn[gidx])
+    opt.zero_grad(); loss.backward(); opt.step()
+    <span class="c-kw">if</span> step % <span class="c-num">500</span> == <span class="c-num">0</span>:
+        sae.normalize_decoder()</code></pre>
+    </div>
+    <div class="code" style="margin-top:0">
+      <div class="code-head"><span>the same thing here</span><span>JavaScript, Float32Array</span></div>
+<pre><code><span class="c-com">// forward</span>
+pre[i] = x[i] - bPre[i]
+z[j]   = Σ_i Wenc[j][i]·pre[i] + bEnc[j]
+S      = indices of the k largest z
+zk[j]  = j ∈ S ? max(z[j], <span class="c-num">0</span>) : <span class="c-num">0</span>
+xh[i]  = Σ_{j∈S} Wdec[i][j]·zk[j] + bPre[i]
+
+<span class="c-com">// backward (only k columns are live)</span>
+g[i]        = <span class="c-num">2</span>(xh[i] - x[i]) / (B·d)
+dWdec[i][j] += g[i]·zk[j]
+dz[j]        = zk[j] &gt; <span class="c-num">0</span> ? Σ_i g[i]·Wdec[i][j] : <span class="c-num">0</span>
+dWenc[j][i] += dz[j]·pre[i]
+dbEnc[j]    += dz[j]
+dbPre[i]    += g[i] - Σ_j dz[j]·Wenc[j][i]</code></pre>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="tag">Note the two paths into b_pre</span>
+    <p>
+      <code>b_pre</code> is subtracted at the encoder input and added at the decoder output, so its
+      gradient has two terms with opposite signs. Autograd handles this silently; if you ever port
+      an SAE to a framework where you write the backward yourself, this is the term people drop.
+    </p>
+  </div>
+
+  <div class="panel wide" id="p-train">
+    <div class="panel-head">
+      <span class="panel-title">Interactive — train a top-k SAE with a known answer key</span>
+      <span class="panel-sub" id="tr-status">idle</span>
+    </div>
+    <div class="panel-body">
+      <div class="chips" style="margin-bottom:1rem">
+        <button class="chip" aria-pressed="true" data-preset="healthy">Healthy</button>
+        <button class="chip" aria-pressed="false" data-preset="toosmall">Dictionary too small</button>
+        <button class="chip" aria-pressed="false" data-preset="toobig">Dictionary too big</button>
+        <button class="chip" aria-pressed="false" data-preset="ksmall">k too small</button>
+        <button class="chip" aria-pressed="false" data-preset="kbig">k too large</button>
+        <button class="chip" aria-pressed="false" data-preset="fliplens">FlipLens ratios</button>
+      </div>
+
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="tr-m">Dictionary size m <output id="tr-m-v" aria-live="off">128</output></label>
+          <input type="range" id="tr-m" min="16" max="384" step="8" value="128">
+        </div>
+        <div class="ctrl">
+          <label for="tr-k">Top-k <output id="tr-k-v" aria-live="off">4</output></label>
+          <input type="range" id="tr-k" min="1" max="24" step="1" value="4">
+        </div>
+        <div class="ctrl">
+          <label for="tr-mt">True features <output id="tr-mt-v" aria-live="off">64</output></label>
+          <input type="range" id="tr-mt" min="8" max="160" step="4" value="64">
+        </div>
+        <div class="ctrl">
+          <label for="tr-s">True sparsity s <output id="tr-s-v" aria-live="off">3</output></label>
+          <input type="range" id="tr-s" min="1" max="10" step="1" value="3">
+        </div>
+        <div class="ctrl">
+          <label for="tr-noise">Noise σ <output id="tr-noise-v" aria-live="off">0.10</output></label>
+          <input type="range" id="tr-noise" min="0" max="50" step="1" value="10">
+        </div>
+        <div class="ctrl">
+          <label for="tr-lr">Learning rate <output id="tr-lr-v" aria-live="off">1e-3</output></label>
+          <input type="range" id="tr-lr" min="0" max="4" step="1" value="2">
+        </div>
+        <div class="ctrl">
+          <label for="tr-seed">Seed <output id="tr-seed-v" aria-live="off">0</output></label>
+          <input type="range" id="tr-seed" min="0" max="15" step="1" value="0">
+        </div>
+        <div class="ctrl">
+          <label for="tr-speed">Steps / frame <output id="tr-speed-v" aria-live="off">25</output></label>
+          <input type="range" id="tr-speed" min="5" max="80" step="5" value="25">
+        </div>
+      </div>
+
+      <div class="btnrow" style="margin-bottom:1rem">
+        <button class="btn primary" id="tr-run">Train</button>
+        <button class="btn" id="tr-reset">Reset</button>
+        <label class="switch"><input type="checkbox" id="tr-norm" checked> renormalise decoder every 500 steps</label>
+        <label class="switch"><input type="checkbox" id="tr-std" checked> standardise inputs (mu, sd)</label>
+        <label class="switch"><input type="checkbox" id="tr-rawcmp"> score against <em>raw</em> ground truth (caveat 1)</label>
+      </div>
+
+      <div class="canvas-wrap"><canvas role="img" id="tr-canvas" width="1040" height="330" aria-label="Live training: loss curve on the left, per-feature recovery cosines in the middle, and the activation frequency of every dictionary entry on the right."></canvas></div>
+
+      <div class="stats" style="margin-top:1rem">
+        <div class="stat"><span class="lbl">Step</span><span class="val" id="tr-step">0</span><span class="sub">of 3000</span></div>
+        <div class="stat"><span class="lbl">MSE</span><span class="val" id="tr-mse">—</span><span class="sub">on the batch</span></div>
+        <div class="stat"><span class="lbl">Var. explained</span><span class="val b" id="tr-ve">—</span><span class="sub">600 training rows</span></div>
+        <div class="stat"><span class="lbl">Held-out VE</span><span class="val" id="tr-veho">—</span><span class="sub">unseen rows</span></div>
+        <div class="stat"><span class="lbl">Dead features</span><span class="val w" id="tr-dead">—</span><span class="sub">silent for 500 steps</span></div>
+        <div class="stat"><span class="lbl">Recovery</span><span class="val a" id="tr-rec">—</span><span class="sub">mean max |cos| true→learned</span></div>
+        <div class="stat"><span class="lbl">Precision</span><span class="val" id="tr-prec">—</span><span class="sub">mean max |cos| learned→true</span></div>
+      </div>
+    </div>
+    <div class="panel-foot" id="tr-foot">
+      <strong>Recovery</strong> asks whether every true feature found a home in the dictionary;
+      <strong>precision</strong> asks whether every live dictionary entry corresponds to something real.
+      A dictionary that is too small scores low on recovery (features get merged); one that is far too
+      large scores well on both but wastes most of its capacity on dead entries and on
+      <em>splitting</em> single true features into near-duplicate shards.
+    </div>
+  </div>
+
+  <h3>What each failure mode looks like</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Preset</th><th>Symptom on the panel</th><th>What it means on real activations</th></tr></thead>
+      <tbody>
+        <tr><td>Dictionary too small</td><td>recovery plateaus well below 1; precision stays high</td><td>features get merged; you find compound directions and mistake them for concepts</td></tr>
+        <tr><td>Dictionary too big</td><td>dead-feature count climbs; recovery good, precision dips</td><td>feature splitting — one true concept spreads over several near-duplicate columns, and most of the dictionary never fires</td></tr>
+        <tr><td>k too small</td><td>variance explained stalls; loss curve flattens early</td><td>the code cannot represent inputs with more active features than k, so error is structural, not optimisation</td></tr>
+        <tr><td>k too large</td><td>excellent reconstruction, recovery <em>drops</em></td><td>the classic trap: the SAE reconstructs beautifully by using many small non-meaningful directions. Reconstruction is not evidence of interpretability</td></tr>
+        <tr><td>Standardisation off</td><td>slower convergence, worse recovery when dimensions have unequal scale</td><td>why <code>train_sae</code> standardises — and why that choice comes back to bite in <a href="#s9">section 09</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note caution">
+    <span class="tag">The single most important lesson on this page</span>
+    <p>
+      Set <em>k too large</em> and watch variance explained go to <span class="num">0.99+</span> while
+      recovery <em>falls</em>. A well-reconstructing SAE is not a correct one. Your run reports
+      <span class="num">var_explained = 0.998</span>; on its own that number says the answer-position
+      residual stream is low-dimensional, not that the 2048 features mean anything.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ 05 ============================ -->
+<section id="s5">
+  <span class="snum">05 — The frontier</span>
+  <h2>Sparsity against fidelity, which is the only real dial</h2>
+
+  <p class="lede">
+    An SAE has exactly one fundamental trade-off, and every hyperparameter is a way of moving along
+    it: how few features may be active (<span class="num">L0</span>) against how much of the
+    activation you can rebuild (<span class="num">1 − FVU</span>). A single SAE is a point. A
+    <em>family</em> of SAEs is a curve, and the curve is what you compare when you want to say one
+    architecture or one layer is better than another.
+  </p>
+
+  <div class="panel wide" id="p-frontier">
+    <div class="panel-head">
+      <span class="panel-title">Interactive — sweep k, plot the frontier</span>
+      <span class="panel-sub" id="fr-status">press Run sweep</span>
+    </div>
+    <div class="panel-body">
+      <div class="btnrow" style="margin-bottom:1rem">
+        <button class="btn primary" id="fr-run">Run sweep</button>
+        <button class="btn" id="fr-clear">Clear</button>
+        <span class="small" style="font-family:var(--sans);font-size:12px;color:var(--ink-3)">
+          trains one SAE per k ∈ {1, 2, 3, 4, 6, 8, 12, 16, 24}, 900 steps each, on the panel-04 data
+        </span>
+      </div>
+      <div class="canvas-wrap"><canvas role="img" id="fr-canvas" width="1040" height="360" aria-label="Pareto frontier: fraction of variance unexplained against L0, for a family of top-k sparse autoencoders, with feature-recovery quality shown alongside."></canvas></div>
+      <div class="legend">
+        <span><i style="background:var(--blue)"></i>fraction of variance unexplained (held out)</span>
+        <span><i style="background:var(--amber)"></i>ground-truth recovery</span>
+      </div>
+    </div>
+    <div class="panel-foot">
+      The two curves do not peak in the same place. Reconstruction improves monotonically with
+      <span class="num">k</span>; recovery of the true dictionary peaks near the data's real sparsity
+      and then declines. If you pick <span class="num">k</span> by reconstruction alone you will
+      systematically pick one that is too large.
+    </div>
+  </div>
+
+  <p>
+    On the real model you have no recovery curve, so the field substitutes proxies for the amber
+    line. In rough order of how much they tell you:
+  </p>
+  <ol>
+    <li><strong>Downstream loss recovered.</strong> Splice <span class="num">x̂</span> back into the
+      forward pass in place of <span class="num">x</span> and measure how much of the model's
+      original loss survives. This is much stricter than reconstruction MSE, because it weights
+      errors by whether the model cares about them.</li>
+    <li><strong>Causal tests on individual features.</strong> Ablate or amplify one feature and
+      measure the change in the output you care about. For you, that output is right there: does
+      steering the flip-aligned feature flip the answer? <em>This is the experiment your SAE section
+      is currently missing</em>, and it is the one that would turn a correlation into a claim.</li>
+    <li><strong>Interpretability scores.</strong> Automated labelling of what a feature fires on, then
+      testing whether the label predicts activation on held-out inputs.</li>
+    <li><strong>Reconstruction quality alone.</strong> Necessary, nowhere near sufficient.</li>
+  </ol>
+
+  <h3>The honest state of the method</h3>
+  <p>
+    SAEs are a young and contested tool, and a corroboration argument built on one should say so.
+    The strongest published negative results are about <em>downstream usefulness</em>, not about
+    whether the decomposition exists: on sparse probing across many binary tasks, SAE-latent probes
+    did not consistently beat logistic regression on raw activations, KNN or PCA baselines, in
+    standard conditions or under scarcity, imbalance, label noise or covariate shift
+    (<span class="num">arXiv:2502.16681</span>); and on a steering-and-detection benchmark, SAEs
+    were not competitive with prompting, finetuning, or plain difference-in-means
+    (<span class="num">arXiv:2501.17148</span>). Feature <em>absorption</em> — where a general
+    feature quietly offloads part of its job onto a more specific one — is documented and is not
+    fixed by tuning dictionary size or sparsity (<span class="num">arXiv:2409.14507</span>).
+  </p>
+  <p>
+    That is not an argument against what you are doing with it. Your SAE is not being asked to be a
+    better probe or a better steering vector; it is being asked one narrow question —
+    <em>does an unsupervised decomposition contain the axis a supervised method already found?</em>
+    — and that question is one of the things the method is genuinely good for, because failure would
+    be informative and success does not require the dictionary to be optimal. Worth citing the
+    negative literature anyway when you write it up, because a reader who knows it will trust the
+    claim more if you have already bounded it.
+  </p>
+  <p class="small">
+    Background reading, in the order that would be most useful here: Gao et al.,
+    <em>Scaling and Evaluating Sparse Autoencoders</em> (<span class="num">arXiv:2406.04093</span>) —
+    the top-<i>k</i> formulation you are using, plus the auxiliary loss for dead features;
+    Rajamanoharan et al., <em>Gated SAEs</em> (<span class="num">arXiv:2404.16014</span>) and
+    <em>JumpReLU SAEs</em> (<span class="num">arXiv:2407.14435</span>) — the shrinkage problem and
+    two ways around it; Bussmann et al., <em>BatchTopK</em>
+    (<span class="num">arXiv:2412.06410</span>) — letting L0 vary per example; Elhage et al.,
+    <em>Toy Models of Superposition</em> (<span class="num">arXiv:2209.10652</span>) — the geometry
+    behind section 01.
+  </p>
+</section>
+
+<!-- ============================ 06 ============================ -->
+<section id="s6">
+  <span class="snum">06 — Reading a feature</span>
+  <h2>Three different questions, three different statistics</h2>
+
+  <p class="lede">
+    Once the dictionary exists you have 2048 candidate directions and no labels. Your script asks
+    three separable things of them, and it is worth being precise about which is which, because
+    they can and do disagree.
+  </p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Question</th><th>Statistic in <code>sae.py</code></th><th>What it can establish</th></tr></thead>
+      <tbody>
+        <tr><td><strong>What does it fire on?</strong></td><td><code>register_selectivity()</code> — mean activation per phenomenon</td><td>a description; suggestive, never sufficient</td></tr>
+        <tr><td><strong>Where does it point?</strong></td><td><code>cos = feat_dirs @ flip_dir</code></td><td>geometric agreement with experiment C's causal direction</td></tr>
+        <tr><td><strong>What does it predict?</strong></td><td>point-biserial of per-cluster mean activation with the flip label</td><td>whether the feature carries flip information</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    Nothing here is causal. A feature can point exactly along the flip axis and predict nothing
+    (that is your <code>results_transfer</code> run), or predict flips strongly while pointing
+    somewhere else entirely (that is <code>results/sae</code>). Only in
+    <code>results_gemma/sae_gemma</code> do the two nearly coincide in a single feature — see
+    <a href="#s8">section 08</a>.
+  </p>
+
+  <h3>Point-biserial, and how much of it you actually have</h3>
+  <p>
+    The point-biserial correlation is just Pearson's <span class="num">r</span> where one variable
+    is binary; it is monotonically related to a two-sample <span class="num">t</span>-test on the
+    same data. The subtlety is not the formula, it is the sample: <span class="num">n</span> in
+    <code>score_features</code> is the number of <em>clusters</em>, not rows, and the positive class
+    is the number of <em>flipped</em> clusters — 14, 26, and 81 in your three runs. With counts that
+    small, the sampling interval on <span class="num">r</span> is wide, and the maximum over 2048
+    features is again a selected statistic.
+  </p>
+
+  <div class="panel wide" id="p-pb">
+    <div class="panel-head">
+      <span class="panel-title">Interactive — how much does a point-biserial of 0.43 pin down?</span>
+      <span class="panel-sub">drag the separation; resample to see the sampling noise</span>
+    </div>
+    <div class="panel-body">
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="pb-sep">True effect (SD between groups) <output id="pb-sep-v" aria-live="off">1.00</output></label>
+          <input type="range" id="pb-sep" min="0" max="30" step="1" value="10">
+        </div>
+        <div class="ctrl">
+          <label for="pb-npos">Flipped clusters <output id="pb-npos-v" aria-live="off">26</output></label>
+          <input type="range" id="pb-npos" min="5" max="120" step="1" value="26">
+        </div>
+        <div class="ctrl">
+          <label for="pb-ntot">Total clusters <output id="pb-ntot-v" aria-live="off">230</output></label>
+          <input type="range" id="pb-ntot" min="40" max="900" step="10" value="230">
+        </div>
+        <div class="ctrl">
+          <label for="pb-max">Features searched over <output id="pb-max-v" aria-live="off">1</output></label>
+          <input type="range" id="pb-max" min="0" max="3" step="1" value="0">
+        </div>
+      </div>
+      <div class="btnrow" style="margin-bottom:1rem">
+        <button class="btn" id="pb-resample">Resample</button>
+        <span class="small" style="font-family:var(--sans);font-size:12px;color:var(--ink-3)">
+          left: one draw. right: the sampling distribution of r over 2000 draws.
+        </span>
+      </div>
+      <div class="canvas-wrap"><canvas role="img" id="pb-canvas" width="1040" height="330" aria-label="Left: per-cluster feature activation for flipped and stable clusters. Right: the sampling distribution of the point-biserial correlation, and how selecting the maximum over many features shifts it."></canvas></div>
+      <div class="stats" style="margin-top:1rem">
+        <div class="stat"><span class="lbl">This draw's r</span><span class="val b" id="pb-r">—</span><span class="sub">point-biserial</span></div>
+        <div class="stat"><span class="lbl">Central 95%</span><span class="val" id="pb-ci">—</span><span class="sub">over 2000 draws</span></div>
+        <div class="stat"><span class="lbl">Null, no effect</span><span class="val" id="pb-null">—</span><span class="sub">95th pct of |r|</span></div>
+        <div class="stat"><span class="lbl">Selected null</span><span class="val a" id="pb-selnull">—</span><span class="sub">best of m features</span></div>
+      </div>
+    </div>
+    <div class="panel-foot">
+      Set <em>features searched over</em> to 2048 and watch the grey null march right. With 26 positives
+      out of the 231 clusters the retired probe evaluates, the best of 2048 <em>pure noise</em>
+      features reaches a point-biserial of about
+      <span class="num" id="pb-callout">0.23</span> on its own. Your reported
+      <span class="num">0.43</span> has to clear that bar, not zero — it does, but the margin is
+      much smaller than it looks.
+    </div>
+  </div>
+
+  <h3>Register selectivity, as reported</h3>
+  <p>
+    <code>register_selectivity()</code> returns the mean activation of the top flip-predicting
+    feature within each phenomenon. It is the closest thing in the script to "what does this feature
+    mean", and it is the weakest of the three statistics: an unnormalised mean over raw activations,
+    with no correction for how often the feature fires or how many rows each phenomenon contributes.
+    Plotted side by side, the three runs tell very different stories.
+  </p>
+
+  <div class="panel wide" id="p-reg">
+    <div class="panel-head">
+      <span class="panel-title">Actual output — register selectivity of the top flip feature</span>
+      <span class="panel-sub">from your three <code>sae.json</code> files</span>
+    </div>
+    <div class="panel-body">
+      <div class="chips" style="margin-bottom:1rem">
+        <button class="chip" aria-pressed="true" data-reg="gemma">results_gemma · feature 439</button>
+        <button class="chip" aria-pressed="false" data-reg="nano">results · feature 991</button>
+        <button class="chip" aria-pressed="false" data-reg="transfer">results_transfer · feature 423</button>
+      </div>
+      <div class="canvas-wrap"><canvas role="img" id="reg-canvas" width="1040" height="300" aria-label="Bar chart of the top flip feature's mean activation in each paraphrase phenomenon, for each of the three runs."></canvas></div>
+      <div class="stats" style="margin-top:1rem">
+        <div class="stat"><span class="lbl">Max / min ratio</span><span class="val b" id="reg-ratio">—</span><span class="sub">selectivity, such as it is</span></div>
+        <div class="stat"><span class="lbl">Top register</span><span class="val" id="reg-top" style="font-size:.8rem">—</span><span class="sub">highest mean activation</span></div>
+        <div class="stat"><span class="lbl">Spread</span><span class="val" id="reg-spread">—</span><span class="sub">max − min</span></div>
+      </div>
+    </div>
+    <div class="panel-foot" id="reg-foot">—</div>
+  </div>
+</section>
+
+<!-- ============================ 07 ============================ -->
+<section id="s7">
+  <span class="snum">07 — The null you need</span>
+  <h2>"Best of 2048" is not the same experiment as "one random direction"</h2>
+
+  <p class="lede">
+    This is the section that will change a number in your write-up. The headline SAE claim compares
+    three quantities that are produced by three <em>different selection procedures</em>, and only one
+    of them is a fair reference for the others.
+  </p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Quantity</th><th>How it is computed in <code>sae.py</code></th><th>Selection</th></tr></thead>
+      <tbody>
+        <tr><td class="hi">SAE feature</td><td><code>np.argmax(np.abs(cos))</code> over the dictionary</td><td class="n">max of 2048</td></tr>
+        <tr><td class="k-amber">PCA baseline</td><td><code>np.max(np.abs(pca_dirs @ fdir))</code> over the top 20 PCs</td><td class="n">max of 20</td></tr>
+        <tr><td class="k-grey">Random baseline</td><td><code>np.mean([abs(...) for _ in range(200)])</code></td><td class="n">mean of 1</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The random baseline is not the null distribution of the SAE statistic. It is the null
+    distribution of "pick one direction at random and measure it once", which is a much easier bar.
+    The maximum of many draws is systematically larger than the mean of one, and in
+    <span class="num">R<sup>384</sup></span> the gap is a factor of four and a half.
+  </p>
+
+  <div class="panel wide" id="p-null">
+    <div class="panel-head">
+      <span class="panel-title">Interactive — the null distribution of a maximum</span>
+      <span class="panel-sub">Monte Carlo, exact geometry, no approximation</span>
+    </div>
+    <div class="panel-body">
+      <div class="ctrls">
+        <div class="ctrl">
+          <label for="nl-d">Ambient dimension d <output id="nl-d-v" aria-live="off">384</output></label>
+          <input type="range" id="nl-d" min="16" max="1024" step="8" value="384">
+        </div>
+        <div class="ctrl">
+          <label for="nl-m">Candidate directions m <output id="nl-m-v" aria-live="off">2048</output></label>
+          <input type="range" id="nl-m" min="0" max="12" step="1" value="11">
+        </div>
+        <div class="ctrl">
+          <label for="nl-trials">Monte Carlo trials <output id="nl-trials-v" aria-live="off">20000</output></label>
+          <input type="range" id="nl-trials" min="2000" max="60000" step="2000" value="20000">
+        </div>
+      </div>
+      <div class="canvas-wrap"><canvas role="img" id="nl-canvas" width="1040" height="340" aria-label="The Monte Carlo distribution of the maximum absolute cosine between a fixed direction and m random directions in d dimensions, with the three observed FlipLens values marked."></canvas></div>
+      <div class="stats" style="margin-top:1rem">
+        <div class="stat"><span class="lbl">Null mean</span><span class="val" id="nl-mean">—</span><span class="sub">E[max |cos|]</span></div>
+        <div class="stat"><span class="lbl">Null 95th pct</span><span class="val" id="nl-p95">—</span><span class="sub">one-sided 0.05</span></div>
+        <div class="stat"><span class="lbl">Null 99th pct</span><span class="val" id="nl-p99">—</span><span class="sub">one-sided 0.01</span></div>
+        <div class="stat"><span class="lbl">Asymptotic</span><span class="val" id="nl-asym">—</span><span class="sub">√(2 ln 2m / d)</span></div>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--grey)"></i>null distribution of max |cos|</span>
+        <span><i style="background:var(--blue)"></i>SAE 0.737</span>
+        <span><i style="background:var(--amber)"></i>PCA 0.519</span>
+      </div>
+    </div>
+    <div class="panel-foot">
+      <strong>How it is sampled.</strong> For a random unit vector in <span class="num">R<sup>d</sup></span>,
+      the squared cosine with any fixed direction is exactly
+      <span class="num">Beta(½, (d−1)/2)</span>, so each draw is O(1) and no <span class="num">d</span>-dimensional
+      vector ever has to be built. That is what makes 20,000 trials × 2048 candidates instant in a browser.
+    </div>
+  </div>
+
+  <div class="note finding">
+    <span class="tag">What the corrected null does to your result</span>
+    <p>
+      At <span class="num">d = 384</span>: the mean of one random direction is
+      <span class="num">0.041</span>, the expected max of 20 is <span class="num">0.110</span>
+      (95th percentile <span class="num">0.153</span>), and the expected max of 2048 is
+      <span class="num">0.184</span> (95th percentile <span class="num">0.213</span>). Your observed
+      values are <span class="num">0.737</span> for the SAE and <span class="num">0.519</span> for
+      PCA. <strong>Both clear the corrected bar by a wide margin</strong> — the finding survives
+      intact. What changes is the sentence you write: "far above a random direction's 0.04" should
+      become "far above the 0.21 that the best of 2048 random directions would reach by chance",
+      which is a stronger claim precisely because it is the honest one.
+    </p>
+  </div>
+
+  <p>
+    Two refinements on the arithmetic. Principal components are orthonormal rather than independent,
+    but for <span class="num">m = 20</span> in <span class="num">d = 384</span> the two nulls agree
+    to three decimal places (<span class="num">0.1106</span> against <span class="num">0.1104</span>),
+    so that distinction does not matter here. And the closed form
+    <span class="num">√(2 ln 2m / d)</span> overshoots the true mean by <span class="num">13%</span>
+    at <span class="num">m = 2048</span> and by <span class="num">26%</span> at
+    <span class="num">m = 20</span> — use it for intuition, simulate for a number.
+  </p>
+
+  <h3>The control that would settle it</h3>
+  <p>
+    A max-matched isotropic null is the <em>minimum</em> correction, and it has a real weakness: SAE
+    dictionary columns are not isotropic draws. They are fitted to the same activations the flip
+    direction is computed from, so both objects live in whatever subspace the answer-position
+    residual stream actually occupies. Random directions in
+    <span class="num">R<sup>384</sup></span> do not.
+  </p>
+  <p>
+    The control that removes that objection is a <strong>placebo direction</strong> built the same
+    way the real one is, but from clusters that did not flip. For each of 200 draws: sample the same
+    number of <em>non-flipped</em> clusters as there are flipped ones (14, 26 or 81), take two
+    distinct paraphrases at random from each, difference them, average, normalise — then take the max
+    cosine over the dictionary exactly as before. The result is a direction with the same
+    construction, the same norm behaviour and the same position in the data cloud as the flip
+    direction, differing only in that it encodes no flip. That distribution is the honest null.
+  </p>
+  <div class="note caution">
+    <span class="tag">Not a label shuffle</span>
+    <p>
+      The obvious version — shuffle which clusters are labelled flipped and re-run
+      <code>flip_direction</code> — does not work here, and it is worth knowing why.
+      <code>flip_direction</code> reads
+      <code>target = next(i for i, pr in items if pr != maj)</code>, and in a cluster that never
+      flipped every prediction is identical, so <code>next()</code> finds nothing and raises
+      <code>StopIteration</code>. More fundamentally, "the difference between the majority answer and
+      the minority answer" is undefined when there is no minority. Shuffling <em>is</em> the right
+      null for the point-biserial, where the statistic only needs a binary label per cluster and the
+      per-cluster mean activations never move — so use a shuffle there and the placebo direction here.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ 08 ============================ -->
+<section id="s8">
+  <span class="snum">08 — What your runs found</span>
+  <h2>Three runs, read side by side</h2>
+
+  <p class="lede">
+    The repository contains three SAE results, produced by the same script against three different
+    models. They are not three replications of one finding; they disagree in ways that are worth
+    stating plainly, because the README currently quotes one of them.
+  </p>
+
+  <div class="tbl-wrap wide">
+    <table>
+      <thead>
+        <tr>
+          <th>Quantity</th>
+          <th class="n">results/sae<br><span style="font-weight:400;text-transform:none;letter-spacing:0">nanoVLM probe</span></th>
+          <th class="n">results_gemma/sae_gemma<br><span style="font-weight:400;text-transform:none;letter-spacing:0">1,841-question probe</span></th>
+          <th class="n">results_transfer/sae<br><span style="font-weight:400;text-transform:none;letter-spacing:0">scaled grounded model</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Rows in X</td><td class="n">1,323</td><td class="n">1,323</td><td class="n">73,500</td></tr>
+        <tr><td>Flipped clusters</td><td class="n">14</td><td class="n">26</td><td class="n">81</td></tr>
+        <tr><td>Variance explained</td><td class="n">0.9980</td><td class="n">0.9987</td><td class="n">0.9907</td></tr>
+        <tr><td><strong>Best |cos| with the C direction</strong></td><td class="n">0.790 <span class="k-grey">(f2022)</span></td><td class="n hi">0.737 <span class="k-grey">(f13)</span></td><td class="n">0.593 <span class="k-grey">(f186)</span></td></tr>
+        <tr><td>…that feature's flip point-biserial</td><td class="n lo">−0.110</td><td class="n hi">+0.422</td><td class="n lo">−0.057</td></tr>
+        <tr><td><strong>Best flip point-biserial</strong></td><td class="n">0.395 <span class="k-grey">(f991)</span></td><td class="n hi">0.433 <span class="k-grey">(f439)</span></td><td class="n lo">0.133 <span class="k-grey">(f423)</span></td></tr>
+        <tr><td>…that feature's |cos| with C</td><td class="n">0.158</td><td class="n">0.155</td><td class="n lo">0.013</td></tr>
+        <tr><td>PCA top-20 max |cos|</td><td class="n lo">0.883</td><td class="n">0.519</td><td class="n">0.474</td></tr>
+        <tr><td>Random direction, mean |cos|</td><td class="n">0.0415</td><td class="n">0.0428</td><td class="n">0.0423</td></tr>
+        <tr><td>Corrected null (max of 2048)</td><td class="n k-grey">≈0.184</td><td class="n k-grey">≈0.184</td><td class="n k-grey">≈0.184</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Read one: the result is real</h3>
+  <p>
+    In all three runs, an unsupervised dictionary column lands far closer to the supervised flip
+    direction than chance allows — <span class="num">0.59</span> to <span class="num">0.79</span>
+    against a corrected null near <span class="num">0.18</span>. The flip axis is recoverable
+    without flip labels. That is the claim the corroboration section needs, and it holds.
+  </p>
+
+  <h3>Read two: the README quotes numbers its own history already superseded</h3>
+  <p>
+    The README's paragraph — <em>"aligns with the causal flip direction at |cosine| 0.74, clearly
+    ahead of principal-component analysis at 0.52 … a distinct feature predicts flips
+    (point-biserial 0.43)"</em> — is <code>results_gemma/sae_gemma/sae.json</code> exactly, while the
+    reproduce table at the bottom of the same file points readers to
+    <code>results_transfer/{sae,jlens}/*.json</code>. A reader following the pointer will not find
+    the quoted numbers.
+  </p>
+  <p>
+    And the gap is not just "retired probe versus scaled model". <code>git log</code> puts
+    <code>results_gemma/sae_gemma/sae.json</code> at <code>8596e7c</code>, which predates
+    <code>4bedb46</code> — the commit that added <code>--grounding-token</code> and
+    <code>--model-steps</code> to these two scripts. Its message is explicit about what it was
+    fixing:
+  </p>
+  <div class="note caution">
+    <span class="tag">commit 4bedb46</span>
+    <p style="font-style:italic">
+      "Both scripts called <code>train_model()</code> without <code>use_ground</code>, so they
+      analysed a model deprived of the grounding token that carries its visual signal, and both
+      defaulted to 1,500 training steps while the scaled model converges near 8,000. Either defect
+      would have produced plausible-looking numbers off an undertrained, half-blind net."
+    </p>
+  </div>
+  <p>
+    So <span class="num">0.74 / 0.52 / 0.43</span> are the pre-fix numbers, and the same commit
+    already recorded the post-fix ones and their honest reading: <em>"On the scaled model both
+    corroborations replicate directionally but weaker … Both methods measure structure in paraphrase
+    disagreement, and this model disagrees on only 81 clusters, so there is far less to detect.
+    Reported as measured."</em> That paragraph is a better description of the experiment than the one
+    currently in the README. <strong>The work was done; only the README lags.</strong> The fix is to
+    move the commit message's framing into the corroboration section and swap the four numbers.
+  </p>
+
+  <div class="note finding">
+    <span class="tag">Read three: what actually changes at scale</span>
+    <p>
+      Best alignment falls <span class="num">0.737 → 0.593</span> and the best flip point-biserial
+      falls <span class="num">0.433 → 0.133</span>. Three explanations are on the table and the data
+      here cannot separate them: (i) the author's own — there are only 81 flipped clusters out of
+      1,500, so there is far less signal to find; (ii) the pre-fix model was undertrained and
+      ungrounded, and some of the 0.74 was structure in a half-blind net; (iii) 2048 features and
+      3000 steps underfit 73,500 rows where they comfortably fit 1,323. Only (iii) is cheap to test:
+      rerun with <code>--dict 8192</code> and a longer <code>train_sae</code> and see whether
+      alignment recovers. If it does not, (i) and (ii) are the story and the honest headline is the
+      geometric result alone.
+    </p>
+  </div>
+
+  <h3>Read four: PCA beats the SAE in one of the three runs</h3>
+  <p>
+    On the nanoVLM probe, the top-20 principal components reach <span class="num">0.883</span>
+    against the SAE's <span class="num">0.790</span> — the baseline wins, from 20 candidates rather
+    than 2048. The "edging out PCA" framing is true of the gemma run and the transfer run and false
+    of the first. This is not embarrassing; it is the normal state of SAE evaluation, where simple
+    baselines are competitive more often than the literature's framing suggests. It does mean the
+    honest sentence is "on the converged probe the SAE feature is closer than any of the top 20
+    principal components", with the run named.
+  </p>
+
+  <h3>Read five: the SAE analyses a sibling of the released model, not the released model</h3>
+  <p>
+    <code>run()</code> calls <code>train_model(...)</code> and trains a fresh probe from scratch; it
+    never loads <code>results_transfer/v2_aug_s0/model.pt</code>. The two are visibly different
+    models:
+  </p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th></th><th class="n">released checkpoint</th><th class="n">the model the SAE analysed</th></tr></thead>
+      <tbody>
+        <tr><td>training steps</td><td class="n">30,000</td><td class="n">8,000</td></tr>
+        <tr><td>early stop</td><td class="n">8,000</td><td class="n">5,500</td></tr>
+        <tr><td>eval clusters</td><td class="n">15,112</td><td class="n">1,500 (val, <code>NANO_EVAL_MAX</code>)</td></tr>
+        <tr><td>flip rate</td><td class="n">0.061</td><td class="n">0.049</td></tr>
+        <tr><td>learning rate</td><td class="n">5e-4 (<code>train.py --lr</code>)</td><td class="n">3e-4 (<code>train_model</code> default)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The released checkpoint was trained through <code>scripts/train/train.py</code>, which takes an
+    explicit <code>--lr</code>; <code>sae.py</code> calls <code>train_model</code> directly and passes
+    none, so its probe trains at the library default. This is defensible — the corroboration is about a mechanism, not a checkpoint —
+    but it should be stated, because "the SAE confirms the model in the model card" is not quite what
+    happened.
+  </p>
+
+  <div class="note caution">
+    <span class="tag">And a reproducibility flag worth chasing</span>
+    <p>
+      <code>run_sae_jlens_v2.sh</code> launches <code>sae.py</code> and <code>jlens.py</code> with
+      identical training configuration — same index, same seed 0, same
+      <code>--model-steps 8000</code>, same <code>NANO_EVAL_MAX=1500</code> — differing only in
+      <code>CUDA_VISIBLE_DEVICES</code>. They report different flip sets:
+      <code>sae.json</code> has <span class="num">81</span> flipped clusters,
+      <code>jlens.json</code> has <span class="num">flip_rate 0.0487 × 1500 = 73</span>. Ten percent
+      of the flip set is not reproducible across two GPUs at fixed seed, even with
+      <code>cudnn.deterministic = True</code>. Since both "independent corroborations" are supposed
+      to be measuring the same flips, that gap is worth one run to explain.
+    </p>
+  </div>
+
+  <div class="note">
+    <span class="tag">The strongest single fact in the three files</span>
+    <p>
+      In <code>results_gemma</code>, feature 13 has <span class="num">|cos| = 0.737</span>
+      <em>and</em> point-biserial <span class="num">+0.422</span> — within noise of the best
+      predictive feature in the whole dictionary (<span class="num">0.433</span>). One unsupervised
+      feature both points along the causal axis and predicts which clusters flip. That coincidence
+      does not occur in the other two runs, where the aligned feature has point-biserial
+      <span class="num">−0.110</span> and <span class="num">−0.057</span>. If you want one sentence
+      from this experiment, it is about feature 13.
+    </p>
+  </div>
+
+  <div class="panel wide" id="p-compare">
+    <div class="panel-head">
+      <span class="panel-title">Interactive — the same chart as <code>figures/sae_alignment.png</code>, with the corrected null</span>
+      <span class="panel-sub">toggle runs and baselines</span>
+    </div>
+    <div class="panel-body">
+      <div class="chips" style="margin-bottom:1rem">
+        <button class="chip" aria-pressed="false" data-run="nano">results/sae</button>
+        <button class="chip" aria-pressed="true" data-run="gemma">results_gemma</button>
+        <button class="chip" aria-pressed="false" data-run="transfer">results_transfer</button>
+        <span style="flex:1"></span>
+        <label class="switch"><input type="checkbox" id="cmp-null" checked> show corrected nulls</label>
+      </div>
+      <div class="canvas-wrap"><canvas role="img" id="cmp-canvas" width="1040" height="330" aria-label="Absolute cosine with the causal flip direction for the best SAE feature, the best of the top 20 principal components, and random baselines, for the selected run."></canvas></div>
+    </div>
+    <div class="panel-foot">
+      The dashed line over each bar is what <em>that</em> selection procedure reaches by chance.
+      The SAE bar on the left has to clear a chance ceiling near <span class="num">0.21</span>,
+      because it is the best of 2048 candidates; PCA in the middle clears
+      <span class="num">0.15</span> from 20. The random bar on the right carries no ceiling — it
+      <em>is</em> the chance level, which is exactly why it is the wrong reference for the other two.
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 09 ============================ -->
+<section id="s9">
+  <span class="snum">09 — Caveats</span>
+  <h2>Eleven things about this implementation, and the fix for each</h2>
+
+  <p class="lede">
+    None of these overturn the finding. Most are one- or two-line changes, and several would make
+    the result <em>stronger</em> to state. They are ordered by how much they affect a number you
+    have published.
+  </p>
+
+  <div class="panel" id="p-caveats" style="margin-top:1.6rem">
+    <div class="panel-head">
+      <span class="panel-title">Interactive — expand each</span>
+      <span class="panel-sub">sorted by impact on a published number</span>
+    </div>
+    <div class="panel-body" id="cav-body"></div>
+  </div>
+
+  <h3>The one experiment that would close the argument</h3>
+  <p>
+    Everything in <code>sae.py</code> is correlational: a feature <em>points</em> in the same
+    direction as the causal axis, and a feature <em>predicts</em> which clusters flip. Neither says
+    the feature <em>does</em> anything. But the machinery to test that already exists in this
+    repository. <code>BabyGemmaVLM._apply_patch</code> takes a <code>basis</code> argument and
+    projects the answer position onto it:
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>src/babygemma/gemma_model.py — lines 113&ndash;118</span><span>already written</span></div>
+<pre><code><span class="c-kw">if</span> basis <span class="c-kw">is</span> <span class="c-kw">None</span>:
+    replaced = donor
+<span class="c-kw">else</span>:
+    b = basis.to(x.device)
+    proj = <span class="c-kw">lambda</span> h: (h @ b.T) @ b
+    replaced = x - proj(x) + proj(donor)   <span class="c-com"># swap only the basis component</span></code></pre>
+  </div>
+
+  <p>
+    Experiment C passes the supervised difference-of-means direction as <code>basis</code>. Pass the
+    <em>SAE decoder column</em> instead — feature 13's column from the gemma run — and rerun the
+    same recovery measurement. If net recovery is comparable to experiment C's
+    <span class="num">0.98–1.00</span>, then an unsupervised feature is not merely aligned with the
+    causal direction, it <em>is</em> a causal direction, found without labels. That is a
+    qualitatively stronger claim than the one currently in the README, and it costs one afternoon
+    and about thirty lines.
+  </p>
+
+  <div class="code">
+    <div class="code-head"><span>sketch — the missing experiment</span><span>add to sae.py</span></div>
+<pre><code><span class="c-com"># after training the SAE and finding best_cos / best_pb</span>
+col = F.normalize(sae.dec.weight[:, best_cos], dim=<span class="c-num">0</span>)        <span class="c-com"># [d] in STANDARDISED space</span>
+col_raw = F.normalize(col * sd.to(col.device), dim=<span class="c-num">0</span>)        <span class="c-com"># back to raw space — see caveat 1</span>
+basis = col_raw.unsqueeze(<span class="c-num">0</span>)                                <span class="c-com"># [1, d], rank-1</span>
+
+<span class="c-com"># then, per flipped cluster, exactly as experiment_e does:</span>
+patch = {<span class="c-str">"layer"</span>: layer, <span class="c-str">"donor"</span>: donor_hidden, <span class="c-str">"basis"</span>: basis, <span class="c-str">"positions"</span>: <span class="c-str">"ans"</span>}
+logits, _ = model(vision, tokens, ans_pos, patch=patch, **kw)
+<span class="c-com"># net recovery = (flipped answers restored - non-flip answers disrupted) / n</span></code></pre>
+  </div>
+</section>
+
+<!-- ============================ 10 ============================ -->
+<section id="s10">
+  <span class="snum">10 — Run it</span>
+  <h2>Reproducing, and one thing in the way</h2>
+
+  <div class="note caution">
+    <span class="tag">sae.py does not currently run</span>
+    <p>
+      Since the package refactor (<code>82bb2f7</code>), <code>train_model()</code> no longer takes an
+      <code>arch</code> keyword — there is only one architecture now, and
+      <code>scripts/train/train.py</code> keeps <code>--arch</code> only "for run/ compatibility". But
+      <code>sae.py:158</code> still calls <code>train_model(regime=…, seed=…, arch=arch, …)</code>,
+      which raises <code>TypeError: train_model() got an unexpected keyword argument 'arch'</code>.
+      The same call pattern appears in <code>jlens.py:156</code>,
+      <code>experiment_a.py:54</code>, <code>experiment_e.py:48</code> and
+      <code>scripts/legacy/eval_ground_nih.py:82</code>. The fix is to drop the keyword (and the
+      <code>--arch</code> flag) from all five.
+    </p>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span>the SAE run, end to end</span><span>bash</span></div>
+<pre><code><span class="c-com"># the scaled grounded model (what results_transfer/sae/sae.json is)</span>
+<span class="c-kw">export</span> NANO_INDEX=<span class="c-str">$PWD/data/index_transfer.json</span>
+<span class="c-kw">export</span> NANO_GEMMA_TOK=<span class="c-num">1</span> NANO_MAXLEN=<span class="c-num">20</span>
+<span class="c-kw">export</span> NANO_FEATS=<span class="c-str">$PWD/cache/transfer_feats.pt</span>
+<span class="c-kw">export</span> NANO_POOLED=<span class="c-str">$PWD/cache/transfer_pooled.pt</span>
+<span class="c-com"># these four decide the eval set and the early stop — omit them and you get a different run</span>
+<span class="c-kw">export</span> NANO_EVAL_SPLIT=val NANO_EVAL_MAX=<span class="c-num">1500</span>
+<span class="c-kw">export</span> NANO_EVAL_EVERY=<span class="c-num">500</span> NANO_PATIENCE=<span class="c-num">12</span>
+
+python scripts/experiments/sae.py \
+  --layer <span class="c-num">1</span> --dict <span class="c-num">2048</span> --topk <span class="c-num">16</span> \
+  --grounding-token --model-steps <span class="c-num">8000</span> \
+  --out results_transfer/sae</code></pre>
+  </div>
+
+  <p>
+    Weights and the MedSigLIP feature cache are on Hugging Face rather than in git, so the first run
+    needs <code>cache/transfer_feats.pt</code> and <code>cache/transfer_pooled.pt</code> in place, and
+    gated access to <code>google/medsiglip-448</code> if you rebuild them from images.
+  </p>
+
+  <p class="small">
+    One thing the CLI does not reach: <code>run()</code> calls
+    <code>train_sae(acts, d, m=m, k=k, device=device)</code> without <code>steps</code> or
+    <code>lr</code>, so the SAE always trains for 3,000 steps at <span class="num">1e-3</span> no
+    matter what. If you want to test the underfitting hypothesis from
+    <a href="#s8">section 08</a>, you have to add the flags first.
+  </p>
+
+  <h3>A short list of worthwhile extensions, in order of value</h3>
+  <ol>
+    <li><strong>Steer the feature</strong> (section 09) — turns correlation into causation, reuses code you already have.</li>
+    <li><strong>Orient the flip direction before averaging</strong> — caveat 01. It is a two-line change to the object that every other number is measured against, and it can only raise the reported alignment.</li>
+    <li><strong>Add the placebo-direction null</strong> — a difference direction built from non-flipping clusters, which preserves the data geometry the isotropic baseline destroys; about twenty lines. Corrects two published numbers at once.</li>
+    <li><strong>Report seed variance</strong> — eight seeds of the SAE on the same model, so the max-of-2048 statistic has an error bar.</li>
+    <li><strong>Sweep the dictionary</strong> — expose <code>--sae-steps</code>, then <code>--dict 8192 --topk 32</code> on the scaled model, to test whether the alignment drop is a real property or underfitting.</li>
+    <li><strong>Sweep the layer</strong> — the script takes <code>--layer</code> but only layer 1 is in the repo. Experiment C reports recovery across layers 0–4; the SAE should be run across the same range so the two methods are compared on the same axis.</li>
+    <li><strong>Log dead features and held-out reconstruction</strong> — three lines, and it closes the "is this dictionary real" question.</li>
+  </ol>
+
+  <div class="note">
+    <span class="tag">Where the SAE sits in the argument</span>
+    <p>
+      The README's triangulation is: a lens-free residual patch and a Jacobian lens agree on
+      <em>where</em>, a GemmaScope SAE finds a register gate on the deployed model, and this probe
+      supplies the controlled <em>origin</em>. The SAE here is the bridge between the two halves — it
+      is the method that found feature 3818 on MedGemma-4B, applied to the probe, and it recovers
+      the same kind of object. Its job is to show that the flip axis is not an artifact of the
+      supervised difference-of-means. On the grounded, converged model it does that at
+      <span class="num">|cos| 0.593</span> against a corrected chance level of
+      <span class="num">0.18</span> — weaker than the <span class="num">0.74</span> the README
+      currently quotes from the pre-fix run, and still comfortably decisive.
+    </p>
+  </div>
+</section>
+
+<footer>
+  <p>
+    Built from <code>scripts/experiments/sae.py</code>, <code>src/babygemma/gemma_model.py</code>,
+    <code>src/babygemma/training.py</code>, <code>src/babygemma/templates.py</code> and the three
+    <code>sae.json</code> result files in this repository. Every simulation on this page runs in
+    your browser; nothing is fetched.
+  </p>
+  <p>
+    FlipLens — <em>Paraphrase Sensitivity in Medical Vision-Language Models</em>.
+    A research probe, not a clinical model.
+  </p>
+</footer>
+
+</div>
+
+<script>
+"use strict";
+/* ==========================================================================
+   Shared utilities
+   ========================================================================== */
+const SANS = 'ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+const MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace';
+/* the stacks above carry double quotes, which would terminate a style="..." attribute
+   at the first family name. These are the versions safe to interpolate into markup. */
+const SANS_A = SANS.replace(/"/g, "'");
+const MONO_A = MONO.replace(/"/g, "'");
+
+function themeColors(){
+  const s = getComputedStyle(document.documentElement);
+  const g = n => s.getPropertyValue('--' + n).trim();
+  return {
+    ink:g('ink'), ink2:g('ink-2'), ink3:g('ink-3'),
+    blue:g('blue'), blue2:g('blue-2'), amber:g('amber'), amber2:g('amber-2'),
+    grey:g('grey'), rule:g('rule'), ruleSoft:g('rule-soft'),
+    panel:g('panel'), panel2:g('panel-2'), sunk:g('sunk'),
+    warn:g('warn'), ok:g('ok'), blueWash:g('blue-wash'), amberWash:g('amber-wash')
+  };
+}
+let C = themeColors();
+
+/* the viewer has three theme states: explicit dark, explicit light, and unstamped
+   (system), where only prefers-color-scheme separates the two. */
+function isDark(){
+  const t = document.documentElement.getAttribute('data-theme');
+  if(t === 'dark') return true;
+  if(t === 'light') return false;
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+function debounce(fn, ms){
+  let h = 0;
+  return function(){ clearTimeout(h); h = setTimeout(fn, ms); };
+}
+
+const REDRAWS = [];
+function onTheme(fn){ REDRAWS.push(fn); }
+function refreshTheme(){ C = themeColors(); REDRAWS.forEach(f => { try{ f(); }catch(e){} }); }
+try{
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshTheme);
+}catch(e){}
+new MutationObserver(refreshTheme).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
+
+function mkCanvas(id){
+  const cv = document.getElementById(id);
+  if(!cv) return null;
+  const W = cv.width, H = cv.height;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
+  cv.style.width = '100%';
+  cv.style.maxWidth = W + 'px';
+  cv.style.minWidth = Math.min(W, 660) + 'px';
+  cv.style.height = 'auto';
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return {cv, ctx, W, H, dpr};
+}
+function clear(c){
+  c.ctx.setTransform(c.dpr,0,0,c.dpr,0,0);
+  c.ctx.clearRect(0,0,c.W,c.H);
+}
+function txt(ctx, s, x, y, {size=11, font=SANS, color=null, align='left', baseline='alphabetic', weight=''}={}){
+  ctx.save();
+  ctx.font = (weight ? weight+' ' : '') + size + 'px ' + font;
+  ctx.fillStyle = color || C.ink2;
+  ctx.textAlign = align; ctx.textBaseline = baseline;
+  ctx.fillText(s, x, y);
+  ctx.restore();
+}
+function line(ctx,x1,y1,x2,y2,color,w=1,dash=null){
+  ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=w;
+  if(dash) ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); ctx.restore();
+}
+function rect(ctx,x,y,w,h,color){ ctx.fillStyle=color; ctx.fillRect(x,y,w,h); }
+function fmt(v,n=3){ return (v===null||v===undefined||!isFinite(v)) ? '—' : v.toFixed(n); }
+function setText(id,v){ const e=document.getElementById(id); if(e) e.textContent = v; }
+
+/* ---- deterministic RNG ---- */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function mkGauss(rng){
+  let spare = null;
+  return function(){
+    if(spare !== null){ const v = spare; spare = null; return v; }
+    let u, v, s;
+    do { u = rng()*2-1; v = rng()*2-1; s = u*u + v*v; } while(s >= 1 || s === 0);
+    const f = Math.sqrt(-2*Math.log(s)/s);
+    spare = v*f; return u*f;
+  };
+}
+/* Marsaglia–Tsang gamma sampler */
+function mkGamma(rng, gauss){
+  return function gam(a){
+    if(a < 1) return gam(a+1) * Math.pow(rng(), 1/a);
+    const d = a - 1/3, c = 1/Math.sqrt(9*d);
+    for(;;){
+      let x, v;
+      do { x = gauss(); v = 1 + c*x; } while(v <= 0);
+      v = v*v*v;
+      const u = rng();
+      if(u < 1 - 0.0331*x*x*x*x) return d*v;
+      if(Math.log(u) < 0.5*x*x + d*(1 - v + Math.log(v))) return d*v;
+    }
+  };
+}
+/* |cos| between a random unit vector in R^d and a fixed direction:
+   cos^2 ~ Beta(1/2, (d-1)/2)  — exact, and O(1) per draw. */
+function mkAbsCos(gam){
+  return function(d){
+    const x = gam(0.5), y = gam((d-1)/2);
+    return Math.sqrt(x/(x+y));
+  };
+}
+function quantile(sorted, q){
+  if(!sorted.length) return NaN;
+  const i = Math.min(sorted.length-1, Math.max(0, Math.floor(q*(sorted.length-1))));
+  return sorted[i];
+}
+
+/* ==========================================================================
+   Scroll progress + active nav
+   ========================================================================== */
+(function(){
+  const bar = document.getElementById('progress');
+  const links = Array.from(document.querySelectorAll('.jump a'));
+  function upd(){
+    const h = document.documentElement;
+    const max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max > 0 ? (h.scrollTop / max * 100) : 0) + '%';
+  }
+  document.addEventListener('scroll', upd, {passive:true});
+  upd();
+  if('IntersectionObserver' in window){
+    const io = new IntersectionObserver(es => {
+      es.forEach(e => {
+        if(!e.isIntersecting) return;
+        links.forEach(a => a.style.color = '');
+        const a = links.find(l => l.getAttribute('href') === '#' + e.target.id);
+        if(a) a.style.color = C.blue;
+      });
+    }, {rootMargin:'-45% 0px -50% 0px'});
+    document.querySelectorAll('section[id]').forEach(s => io.observe(s));
+  }
+})();
+
+/* ==========================================================================
+   Null distribution of a maximum of |cos| — shared by panels 06 and 07.
+   For a random unit vector in R^d, cos^2 with any fixed direction is exactly
+   Beta(1/2,(d-1)/2), so a draw costs O(1). The maximum of m draws is then sampled
+   by inverse transform against a cached sorted base sample: F(t)^m = U.
+   ========================================================================== */
+const NullLab = (function(){
+  const rng = mulberry32(1234567), gauss = mkGauss(rng), gam = mkGamma(rng, gauss);
+  const absCos = mkAbsCos(gam);
+  const BASE = 200000;
+  const cache = new Map();
+  function baseFor(d){
+    if(cache.has(d)) return cache.get(d);
+    const a = new Float64Array(BASE);
+    for(let i=0;i<BASE;i++) a[i] = absCos(d);
+    a.sort();
+    if(cache.size > 6) cache.delete(cache.keys().next().value);
+    cache.set(d, a);
+    return a;
+  }
+  /* max of m i.i.d. draws, sampled by inverse transform: F(t)^m = U */
+  function sampleMax(d, m, trials){
+    const base = baseFor(d);
+    const out = new Float64Array(trials);
+    const inv = 1/m;
+    for(let t=0;t<trials;t++){
+      const u = Math.pow(rng(), inv);
+      out[t] = base[Math.min(BASE-1, Math.floor(u*BASE))];
+    }
+    out.sort();
+    return out;
+  }
+  return {sampleMax, absCos};
+})();
+
+/* ==========================================================================
+   01 — Superposition in two dimensions
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('sp-canvas'); if(!c) return;
+  const els = {
+    n: document.getElementById('sp-n'), nv: document.getElementById('sp-n-v'),
+    a: document.getElementById('sp-active'), av: document.getElementById('sp-active-v'),
+    z: document.getElementById('sp-noise'), zv: document.getElementById('sp-noise-v')
+  };
+
+  function draw(){
+    const N = +els.n.value, ACT = Math.min(+els.a.value, N), NOISE = +els.z.value/100;
+    els.nv.textContent = N; els.av.textContent = ACT; els.zv.textContent = NOISE.toFixed(2);
+
+    // feature directions spread over a half-turn: theta_i = pi*i/N
+    const dirs = [];
+    for(let i=0;i<N;i++){ const t = Math.PI*i/N; dirs.push([Math.cos(t), Math.sin(t)]); }
+    let maxcos = 0;
+    for(let i=0;i<N;i++) for(let j=i+1;j<N;j++){
+      maxcos = Math.max(maxcos, Math.abs(dirs[i][0]*dirs[j][0] + dirs[i][1]*dirs[j][1]));
+    }
+
+    // sample activations
+    const rng = mulberry32(9001), gauss = mkGauss(rng);
+    const NS = 900, pts = [], owner = [];
+    for(let s=0;s<NS;s++){
+      let x=0, y=0, best=-1, bestA=-1;
+      const used = new Set();
+      for(let a=0;a<ACT;a++){
+        let f; do { f = (rng()*N)|0; } while(used.has(f));
+        used.add(f);
+        const amp = 0.45 + Math.abs(gauss())*0.55;
+        x += dirs[f][0]*amp; y += dirs[f][1]*amp;
+        if(amp > bestA){ bestA = amp; best = f; }
+      }
+      x += gauss()*NOISE; y += gauss()*NOISE;
+      pts.push([x,y]); owner.push(best);
+    }
+
+    clear(c);
+    const ctx = c.ctx;
+    const hues = i => `hsl(${(i*360/Math.max(N,1) + 205) % 360} 62% ${isDark() ? 64 : 42}%)`;
+
+    // ---- left plane ----
+    const PX=30, PY=28, PW=360, PH=360, cx=PX+PW/2, cy=PY+PH/2, R=150;
+    txt(ctx,'ACTIVATION SPACE (d = 2)',PX,PY-10,{size:10.5,color:C.ink3,weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.lineWidth=1;
+    ctx.strokeRect(PX,PY,PW,PH); ctx.restore();
+    line(ctx,PX,cy,PX+PW,cy,C.rule,1,[3,3]);
+    line(ctx,cx,PY,cx,PY+PH,C.rule,1,[3,3]);
+    txt(ctx,'neuron 0',PX+PW-6,cy-6,{size:9.5,color:C.grey,align:'right'});
+    txt(ctx,'neuron 1',cx+6,PY+12,{size:9.5,color:C.grey});
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(PX,PY,PW,PH); ctx.clip();
+    ctx.globalAlpha=0.55;
+    pts.forEach((p,i)=>{
+      ctx.fillStyle = hues(owner[i]);
+      ctx.beginPath(); ctx.arc(cx+p[0]*R*0.42, cy-p[1]*R*0.42, 1.8, 0, 6.284); ctx.fill();
+    });
+    ctx.restore();
+
+    dirs.forEach((d,i)=>{
+      ctx.save(); ctx.strokeStyle=hues(i); ctx.lineWidth=2; ctx.globalAlpha=0.95;
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+d[0]*R, cy-d[1]*R); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx+d[0]*R, cy-d[1]*R, 3.2, 0, 6.284); ctx.fillStyle=hues(i); ctx.fill();
+      ctx.restore();
+    });
+
+    // ---- right histogram of neuron 0 ----
+    const HX=460, HY=28, HW=550, HH=360;
+    txt(ctx,'NEURON 0 ACTIVATION, COLOURED BY WHICH FEATURE FIRED',HX,HY-10,{size:10.5,color:C.ink3,weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(HX,HY,HW,HH); ctx.restore();
+
+    const NB=34, lo=-2.6, hi=2.6;
+    const bins = Array.from({length:NB}, ()=>new Array(N).fill(0));
+    let maxbin = 1;
+    pts.forEach((p,i)=>{
+      const b = Math.floor((p[0]-lo)/(hi-lo)*NB);
+      if(b>=0 && b<NB){ bins[b][owner[i]]++; }
+    });
+    bins.forEach(b => { const t=b.reduce((a,v)=>a+v,0); if(t>maxbin) maxbin=t; });
+
+    const bw = HW/NB;
+    for(let b=0;b<NB;b++){
+      let acc=0;
+      for(let f=0;f<N;f++){
+        const v = bins[b][f]; if(!v) continue;
+        const h = v/maxbin*(HH-40);
+        rect(ctx, HX+b*bw+0.5, HY+HH-20-acc-h, bw-1, h, hues(f));
+        acc += h;
+      }
+    }
+    line(ctx,HX,HY+HH-20,HX+HW,HY+HH-20,C.rule,1);
+    txt(ctx,'−2.6',HX+2,HY+HH-6,{size:9.5,color:C.ink3,font:MONO});
+    txt(ctx,'0',HX+HW/2,HY+HH-6,{size:9.5,color:C.ink3,font:MONO,align:'center'});
+    txt(ctx,'+2.6',HX+HW-2,HY+HH-6,{size:9.5,color:C.ink3,font:MONO,align:'right'});
+
+    // purity: among the strongest 30% of |neuron 0| responses, how concentrated is the owner?
+    const strong = pts.map((p,i)=>[Math.abs(p[0]),owner[i]]).sort((a,b)=>b[0]-a[0]).slice(0, Math.floor(NS*0.3));
+    const counts = new Array(N).fill(0);
+    strong.forEach(s=>counts[s[1]]++);
+    const purity = strong.length ? Math.max(...counts)/strong.length : 0;
+
+    setText('sp-ratio', N + ' / 2');
+    setText('sp-maxcos', fmt(maxcos,3));
+    setText('sp-purity', fmt(purity,2));
+  }
+  [els.n, els.a, els.z].forEach(e => e.addEventListener('input', draw));
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   02 — One paraphrase cluster (the real bank)
+   ========================================================================== */
+const PARAPHRASES = {
+  lexical_substitution:[
+    "is there evidence of {f}?","is there radiographic evidence of {f}?","are there signs of {f}?",
+    "are there findings of {f}?","is there an indication of {f}?","does this radiograph demonstrate {f}?",
+    "does this film reveal {f}?","are there features of {f}?","is {f} demonstrated?","is {f} apparent?",
+    "does this examination show {f}?","is there anything suggesting {f}?"],
+  syntactic_restructuring:[
+    "can {f} be identified?","does the image show {f}?","is {f} seen?","do you see {f}?",
+    "can you identify {f}?","has {f} been identified?","would you report {f}?",
+    "is it correct that {f} is present?","{f} is present, correct?","am i seeing {f} here?",
+    "is what we see {f}?","could this be {f}?"],
+  scope_quantification:[
+    "is there any {f}?","is there any sign of {f}?","is there any evidence of {f}?","is there some {f}?",
+    "is any degree of {f} present?","is there definite {f}?","is there clear {f}?",
+    "is there at least some {f}?","is there obvious {f}?","is there frank {f}?",
+    "is even mild {f} present?","is there a suggestion of {f}?"],
+  specificity_modulation:[
+    "is {f} visible on this chest radiograph?","is {f} present on this study?",
+    "is {f} noted on this examination?","is {f} observed in this image?",
+    "is {f} present on the current film?","on this chest x-ray, is {f} present?",
+    "radiographically, is {f} present?","in your assessment, is {f} present?",
+    "is {f} evident on this frontal chest radiograph?","is {f} detected on imaging?",
+    "looking at this picture, is {f} there?","anything like {f} on here?"]
+};
+const OPERATOR_VARIANTS = ["is there no {f}?","is {f} absent?","is the chest clear of {f}?","is {f} ruled out?"];
+const NIH_PHRASES = ["cardiomegaly","pneumothorax","pleural effusion","atelectasis","nodule","mass",
+  "consolidation","edema","pneumonia","infiltrates","emphysema","fibrosis","pleural thickening","hernia"];
+const PHEN_LABEL = {
+  lexical_substitution:'lexical substitution', syntactic_restructuring:'syntactic restructuring',
+  scope_quantification:'scope quantification', specificity_modulation:'specificity modulation',
+  negation_pattern:'negation (excluded)', original:'original'
+};
+
+(function(){
+  const sel = document.getElementById('cl-finding');
+  const list = document.getElementById('cl-list');
+  const flipBox = document.getElementById('cl-flip');
+  if(!sel) return;
+  NIH_PHRASES.forEach((p,i)=>{ const o=document.createElement('option'); o.value=String(i); o.textContent=p; sel.appendChild(o); });
+  sel.value = '2';
+
+  function render(){
+    const f = NIH_PHRASES[+sel.value];
+    const doFlip = flipBox.checked;
+    const rng = mulberry32(+sel.value * 977 + 13);
+    // deterministic: which phrasings the model answers "no" to when the cluster flips
+    const flipped = new Set();
+    if(doFlip){ while(flipped.size < 5){ flipped.add(1 + Math.floor(rng()*48)); } }
+    let html = `<div style="font-family:${SANS_A};font-size:10px;font-weight:650;letter-spacing:.09em;`
+      + `text-transform:uppercase;color:var(--ink-3);padding:.7rem .6rem .25rem">original — emitted first by make_eval_clusters</div>`
+      + `<div style="background:var(--panel);padding:.3rem .55rem;display:flex;gap:.5rem;align-items:baseline;border-bottom:1px solid var(--rule-soft)">`
+      + `<span style="font-family:${MONO_A};font-size:9.5px;color:var(--ink-3);min-width:1.7em;text-align:right">0</span>`
+      + `<span style="flex:1;font-size:.86rem;color:var(--ink)">is there ${f}?</span>`
+      + `<span style="font-family:${SANS_A};font-size:10px;font-weight:700;color:var(--ok)">YES</span></div>`;
+    let idx = 1;
+    for(const phen of Object.keys(PARAPHRASES)){
+      html += `<div style="font-family:${SANS_A};font-size:10px;font-weight:650;letter-spacing:.09em;`
+           + `text-transform:uppercase;color:var(--ink-3);padding:.7rem .6rem .25rem">${PHEN_LABEL[phen]}</div>`;
+      html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:1px;background:var(--rule-soft)">';
+      for(const t of PARAPHRASES[phen]){
+        const isNo = flipped.has(idx);
+        const col = isNo ? 'var(--warn)' : 'var(--ok)';
+        html += `<div style="background:var(--panel);padding:.3rem .55rem;display:flex;gap:.5rem;align-items:baseline">`
+             + `<span style="font-family:${MONO_A};font-size:9.5px;color:var(--ink-3);min-width:1.7em;text-align:right">${idx}</span>`
+             + `<span style="flex:1;font-size:.86rem;color:var(--ink)">${t.replace('{f}', f)}</span>`
+             + `<span style="font-family:${SANS_A};font-size:10px;font-weight:700;color:${col}">${isNo?'NO':'YES'}</span></div>`;
+        idx++;
+      }
+      html += '</div>';
+    }
+    html += `<div style="font-family:${SANS_A};font-size:10px;font-weight:650;letter-spacing:.09em;`
+         + `text-transform:uppercase;color:var(--ink-3);padding:.85rem .6rem .25rem">negation — kept out of the cluster</div>`
+         + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:1px;background:var(--rule-soft)">';
+    for(const t of OPERATOR_VARIANTS){
+      html += `<div style="background:var(--panel);padding:.3rem .55rem;opacity:.55;display:flex;gap:.5rem;align-items:baseline">`
+           + `<span style="font-family:${MONO_A};font-size:9.5px;color:var(--ink-3);min-width:1.7em;text-align:right">—</span>`
+           + `<span style="flex:1;font-size:.86rem">${t.replace('{f}', f)}</span>`
+           + `<span style="font-family:${SANS_A};font-size:10px;font-weight:700;color:var(--ink-3)">INVERTS</span></div>`;
+    }
+    html += '</div>';
+    list.innerHTML = html;
+    setText('cl-ans', doFlip ? '2' : '1');
+    setText('cl-rows', '49');
+    const foot = document.getElementById('cl-n'); if(foot) foot.textContent = '48';
+  }
+  sel.addEventListener('change', render);
+  flipBox.addEventListener('change', render);
+  render();
+})();
+
+/* ==========================================================================
+   03 — One vector through the autoencoder
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('fw-canvas'); if(!c) return;
+  const D = 16, M = 32;
+  const rng = mulberry32(4242), gauss = mkGauss(rng);
+  // dictionary: M unit columns in R^D
+  const dict = [];
+  for(let j=0;j<M;j++){
+    const v = new Float32Array(D); let n2 = 0;
+    for(let i=0;i<D;i++){ v[i] = gauss(); n2 += v[i]*v[i]; }
+    const n = Math.sqrt(n2); for(let i=0;i<D;i++) v[i] /= n;
+    dict.push(v);
+  }
+  const bPre = new Float32Array(D);
+  for(let i=0;i<D;i++) bPre[i] = gauss()*0.35;
+  // 20 pre-generated inputs, each a sparse mix of 3 atoms
+  const INPUTS = [];
+  for(let s=0;s<20;s++){
+    const x = new Float32Array(D); const used = [];
+    for(let i=0;i<D;i++) x[i] = bPre[i];
+    while(used.length < 3){ const j = (rng()*M)|0; if(!used.includes(j)) used.push(j); }
+    used.forEach(j => { const a = 0.7 + Math.abs(gauss())*0.9; for(let i=0;i<D;i++) x[i] += dict[j][i]*a; });
+    for(let i=0;i<D;i++) x[i] += gauss()*0.08;
+    INPUTS.push(x);
+  }
+  let picked = -1;
+
+  const els = {
+    k:document.getElementById('fw-k'), kv:document.getElementById('fw-k-v'),
+    s:document.getElementById('fw-seed'), sv:document.getElementById('fw-seed-v'),
+    relu:document.getElementById('fw-relu')
+  };
+
+  function bars(ctx, vals, x, y, w, h, {color=C.blue, negColor=null, mark=null, markColor=null, base=null}={}){
+    const n = vals.length;
+    const bw = w/n;
+    let mx = 0; for(const v of vals) mx = Math.max(mx, Math.abs(v));
+    mx = mx || 1;
+    const zero = y + h/2;
+    line(ctx, x, zero, x+w, zero, C.ruleSoft, 1);
+    for(let i=0;i<n;i++){
+      const v = vals[i];
+      const bh = Math.abs(v)/mx * (h/2 - 2);
+      const isMark = mark && mark.has(i);
+      ctx.fillStyle = isMark ? (markColor||C.amber) : (v < 0 && negColor ? negColor : color);
+      if(!isMark && base) ctx.fillStyle = base;
+      ctx.fillRect(x + i*bw + 0.6, v >= 0 ? zero - bh : zero, Math.max(1, bw-1.2), bh);
+    }
+    return {bw, zero, mx};
+  }
+
+  function draw(){
+    const K = +els.k.value, S = +els.s.value, useRelu = els.relu.checked;
+    els.kv.textContent = K; els.sv.textContent = '#'+S;
+    const x = INPUTS[S];
+
+    const pre = new Float32Array(D);
+    for(let i=0;i<D;i++) pre[i] = x[i] - bPre[i];
+    const z = new Float32Array(M);
+    for(let j=0;j<M;j++){ let s=0; for(let i=0;i<D;i++) s += dict[j][i]*pre[i]; z[j]=s; }
+    const order = Array.from({length:M}, (_,j)=>j).sort((a,b)=>z[b]-z[a]);
+    const sel = new Set(order.slice(0,K));
+    const zk = new Float32Array(M);
+    let l0 = 0;
+    sel.forEach(j => { const v = useRelu ? Math.max(z[j],0) : z[j]; zk[j]=v; if(v!==0) l0++; });
+    const xh = new Float32Array(D);
+    for(let i=0;i<D;i++){ let s = bPre[i]; for(let j=0;j<M;j++) if(zk[j]!==0) s += dict[j][i]*zk[j]; xh[i]=s; }
+    let mse=0, vx=0, mx=0;
+    for(let i=0;i<D;i++) mx += x[i]; mx/=D;
+    for(let i=0;i<D;i++){ const r = xh[i]-x[i]; mse += r*r; vx += (x[i]-mx)*(x[i]-mx); }
+    mse/=D; vx/=D;
+
+    clear(c);
+    const ctx = c.ctx;
+    const L = 34, TOP = 34, BH = 62, GAP = 30;
+    const W1 = 300, W2 = 620;
+
+    function stage(label, sub, yy){
+      txt(ctx, label, L, yy-10, {size:10.5, color:C.ink3, weight:'600'});
+      if(sub) txt(ctx, sub, L+W2, yy-10, {size:10, color:C.ink3, align:'right', font:MONO});
+    }
+
+    let y = TOP;
+    stage('1 · INPUT  x  (d = 16)', 'raw activation', y);
+    bars(ctx, x, L, y, W1, BH, {color:C.ink2});
+    txt(ctx, '2 · CENTRED  x − b_pre', L+W1+70, y-10, {size:10.5, color:C.ink3, weight:'600'});
+    bars(ctx, pre, L+W1+70, y, W1, BH, {color:C.ink2});
+
+    y += BH + GAP + 12;
+    stage('3 · ENCODER PRE-ACTIVATIONS  z = W_enc(x − b_pre)  (m = 32)', 'top ' + K + ' kept', y);
+    const b3 = bars(ctx, z, L, y, W2, BH, {base:C.grey, mark:sel, markColor:C.blue});
+    if(picked >= 0){
+      ctx.save(); ctx.strokeStyle=C.amber; ctx.lineWidth=1.5;
+      ctx.strokeRect(L + picked*b3.bw, y, Math.max(2,b3.bw), BH); ctx.restore();
+    }
+
+    y += BH + GAP;
+    stage('4 · SPARSE CODE  zk  (ReLU applied after selection)', 'L0 = ' + l0, y);
+    bars(ctx, zk, L, y, W2, BH, {color:C.blue});
+
+    y += BH + GAP + 12;
+    stage('5 · RECONSTRUCTION  x̂ = D·zk + b_pre', 'outline = original x', y);
+    const b5 = bars(ctx, xh, L, y, W1, BH, {color:C.blue});
+    // overlay original as outline
+    ctx.save(); ctx.strokeStyle=C.amber; ctx.lineWidth=1.2;
+    for(let i=0;i<D;i++){
+      const bh = Math.abs(x[i])/b5.mx*(BH/2-2);
+      ctx.strokeRect(L + i*b5.bw + 0.6, x[i]>=0 ? b5.zero-bh : b5.zero, Math.max(1,b5.bw-1.2), bh);
+    }
+    ctx.restore();
+
+    txt(ctx, '6 · RESIDUAL  x̂ − x', L+W1+70, y-10, {size:10.5, color:C.ink3, weight:'600'});
+    const res = new Float32Array(D);
+    for(let i=0;i<D;i++) res[i] = xh[i]-x[i];
+    bars(ctx, res, L+W1+70, y, W1, BH, {color:C.warn});
+
+    if(picked >= 0){
+      y += BH + GAP;
+      txt(ctx, 'DICTIONARY COLUMN ' + picked + '  —  D[:, ' + picked + '], a unit direction in R^16',
+          L, y-10, {size:10.5, color:C.amber, weight:'600'});
+      bars(ctx, dict[picked], L, y, W1, 40, {color:C.amber});
+    }
+
+    setText('fw-l0', String(l0));
+    setText('fw-mse', fmt(mse,4));
+    setText('fw-ve', fmt(1 - mse/vx, 3));
+    setText('fw-comp', K + ' / 16');
+  }
+  c.cv.addEventListener('click', ev => {
+    const r = c.cv.getBoundingClientRect();
+    const sx = c.W / r.width;
+    const x = (ev.clientX - r.left) * sx, yy = (ev.clientY - r.top) * (c.H / r.height);
+    const L = 34, W2 = 620, TOP = 34, BH = 62, GAP = 30;
+    const y3 = TOP + BH + GAP + 12, y4 = y3 + BH + GAP;
+    if(x >= L && x <= L+W2 && ((yy>=y3 && yy<=y3+BH) || (yy>=y4 && yy<=y4+BH))){
+      const j = Math.min(31, Math.max(0, Math.floor((x-L)/(W2/32))));
+      picked = (picked === j) ? -1 : j;
+    } else picked = -1;
+    draw();
+  });
+  c.cv.addEventListener('keydown', ev => {
+    if(ev.key === 'ArrowRight' || ev.key === 'ArrowLeft'){
+      const step = ev.key === 'ArrowRight' ? 1 : -1;
+      picked = picked < 0 ? (step > 0 ? 0 : 31) : (picked + step + 32) % 32;
+      ev.preventDefault(); draw();
+    } else if(ev.key === 'Escape'){ picked = -1; draw(); }
+  });
+  [els.k, els.s].forEach(e=>e.addEventListener('input', draw));
+  els.relu.addEventListener('change', draw);
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   04 — A real top-k SAE, trained live
+   ========================================================================== */
+const SAELab = (function(){
+  const D = 32;                 // ambient dimension (fixed for predictable performance)
+  const NTRAIN = 2000, NHOLD = 400, BATCH = 64, MAXSTEPS = 3000;
+
+  function makeData(cfg){
+    const rng = mulberry32(cfg.seed*7919 + 3), gauss = mkGauss(rng);
+    const G = [];               // ground-truth dictionary, Mtrue unit vectors in R^D
+    for(let j=0;j<cfg.mTrue;j++){
+      const v = new Float32Array(D); let n2=0;
+      for(let i=0;i<D;i++){ v[i]=gauss(); n2+=v[i]*v[i]; }
+      const n = Math.sqrt(n2); for(let i=0;i<D;i++) v[i]/=n;
+      G.push(v);
+    }
+    const offset = new Float32Array(D);
+    for(let i=0;i<D;i++) offset[i] = gauss()*0.8;
+    const N = NTRAIN + NHOLD;
+    const X = new Float32Array(N*D);
+    for(let r=0;r<N;r++){
+      for(let i=0;i<D;i++) X[r*D+i] = offset[i];
+      const used = [];
+      while(used.length < cfg.s){ const j=(rng()*cfg.mTrue)|0; if(!used.includes(j)) used.push(j); }
+      for(const j of used){
+        const a = 0.6 + Math.abs(gauss())*0.8;
+        for(let i=0;i<D;i++) X[r*D+i] += G[j][i]*a;
+      }
+      for(let i=0;i<D;i++) X[r*D+i] += gauss()*cfg.noise;
+    }
+    // standardise on the TRAIN rows only
+    const mu = new Float32Array(D), sd = new Float32Array(D);
+    if(cfg.standardise){
+      for(let i=0;i<D;i++){
+        let s=0; for(let r=0;r<NTRAIN;r++) s += X[r*D+i];
+        mu[i] = s/NTRAIN;
+        let v=0; for(let r=0;r<NTRAIN;r++){ const t=X[r*D+i]-mu[i]; v+=t*t; }
+        sd[i] = Math.sqrt(v/(NTRAIN-1)) + 1e-6;
+      }
+    } else { for(let i=0;i<D;i++){ mu[i]=0; sd[i]=1; } }
+    const Xn = new Float32Array(N*D);
+    for(let r=0;r<N;r++) for(let i=0;i<D;i++) Xn[r*D+i] = (X[r*D+i]-mu[i])/sd[i];
+
+    // ground truth expressed in the space the SAE actually sees:
+    // a difference vector transforms as delta -> delta / sd, then renormalise.
+    const Gstd = G.map(g => {
+      const v = new Float32Array(D); let n2=0;
+      for(let i=0;i<D;i++){ v[i] = g[i]/sd[i]; n2 += v[i]*v[i]; }
+      const n = Math.sqrt(n2)||1; for(let i=0;i<D;i++) v[i]/=n;
+      return v;
+    });
+    let varAll = 0, meanAll = 0;
+    for(let r=0;r<NTRAIN;r++) for(let i=0;i<D;i++) meanAll += Xn[r*D+i];
+    meanAll /= NTRAIN*D;
+    for(let r=0;r<NTRAIN;r++) for(let i=0;i<D;i++){ const t=Xn[r*D+i]-meanAll; varAll += t*t; }
+    varAll /= NTRAIN*D - 1;
+    return {G, Gstd, X, Xn, mu, sd, varAll};
+  }
+
+  function makeSAE(cfg, data){
+    const M = cfg.m;
+    const rng = mulberry32(cfg.seed*104729 + 17), gauss = mkGauss(rng);
+    const s = {
+      m:M, k:Math.min(cfg.k, M), t:0,
+      Wenc:new Float32Array(M*D), bEnc:new Float32Array(M),
+      Wdec:new Float32Array(D*M), bPre:new Float32Array(D),
+      gWenc:new Float32Array(M*D), gbEnc:new Float32Array(M),
+      gWdec:new Float32Array(D*M), gbPre:new Float32Array(D),
+      mWenc:new Float32Array(M*D), vWenc:new Float32Array(M*D),
+      mbEnc:new Float32Array(M), vbEnc:new Float32Array(M),
+      mWdec:new Float32Array(D*M), vWdec:new Float32Array(D*M),
+      mbPre:new Float32Array(D), vbPre:new Float32Array(D),
+      lastFired:new Int32Array(M).fill(-100000),
+      fireCount:new Int32Array(M),
+      selIdx:new Int32Array(cfg.k+1), selVal:new Float32Array(cfg.k+1),
+      pre:new Float32Array(D), z:new Float32Array(M), zk:new Float32Array(cfg.k+1),
+      dz:new Float32Array(cfg.k+1), xh:new Float32Array(D), g:new Float32Array(D),
+      hist:[]
+    };
+    // PyTorch nn.Linear init: U(-1/sqrt(fan_in), 1/sqrt(fan_in))
+    const be = 1/Math.sqrt(D), bd = 1/Math.sqrt(M);
+    for(let i=0;i<M*D;i++) s.Wenc[i] = (rng()*2-1)*be;
+    for(let j=0;j<M;j++) s.bEnc[j] = (rng()*2-1)*be;
+    for(let i=0;i<D*M;i++) s.Wdec[i] = (rng()*2-1)*bd;
+    // b_pre initialised to the data mean, as in train_sae
+    for(let i=0;i<D;i++){
+      let acc=0; for(let r=0;r<NTRAIN;r++) acc += data.Xn[r*D+i];
+      s.bPre[i] = acc/NTRAIN;
+    }
+    normalizeDecoder(s);
+    return s;
+  }
+
+  /* Wdec is stored ATOM-CONTIGUOUS: Wdec[j*D + i] is component i of dictionary atom j.
+     Every hot operation — decode, the rank-1 gradient update, the cosine, the column
+     norm — then walks D contiguous floats instead of striding by m. */
+  function normalizeDecoder(s){
+    for(let j=0;j<s.m;j++){
+      const o = j*D;
+      let n2=0; for(let i=0;i<D;i++){ const v=s.Wdec[o+i]; n2+=v*v; }
+      const n = Math.sqrt(n2) || 1;
+      for(let i=0;i<D;i++) s.Wdec[o+i] /= n;
+    }
+  }
+
+  function topk(z, M, k, selIdx, selVal){
+    let cnt=0, minv=Infinity, minpos=0;
+    for(let j=0;j<M;j++){
+      const v = z[j];
+      if(cnt < k){
+        selIdx[cnt]=j; selVal[cnt]=v; cnt++;
+        if(cnt===k){ minv=Infinity; for(let t=0;t<k;t++) if(selVal[t]<minv){minv=selVal[t];minpos=t;} }
+      } else if(v > minv){
+        selIdx[minpos]=j; selVal[minpos]=v;
+        minv=Infinity; for(let t=0;t<k;t++) if(selVal[t]<minv){minv=selVal[t];minpos=t;}
+      }
+    }
+    return cnt;
+  }
+
+  function adam(p, gp, mA, vA, n, lr, t){
+    const b1=0.9, b2=0.999, eps=1e-8;
+    const c1 = 1 - Math.pow(b1,t), c2 = 1 - Math.pow(b2,t);
+    for(let i=0;i<n;i++){
+      const g = gp[i];
+      mA[i] = b1*mA[i] + (1-b1)*g;
+      vA[i] = b2*vA[i] + (1-b2)*g*g;
+      p[i] -= lr * (mA[i]/c1) / (Math.sqrt(vA[i]/c2) + eps);
+      gp[i] = 0;
+    }
+  }
+
+  /* one optimisation step; returns the batch MSE */
+  function trainStep(s, data, cfg, rng){
+    const M = s.m, K = s.k;
+    const {Wenc, bEnc, Wdec, bPre, gWenc, gbEnc, gWdec, gbPre,
+           pre, z, zk, dz, xh, g, selIdx, selVal} = s;
+    const scale = 2/(BATCH*D);
+    let sse = 0;
+    s.t++;
+    for(let b=0;b<BATCH;b++){
+      const r = (rng()*NTRAIN)|0, off = r*D;
+      for(let i=0;i<D;i++) pre[i] = data.Xn[off+i] - bPre[i];
+      for(let j=0;j<M;j++){
+        let acc = bEnc[j]; const row = j*D;
+        for(let i=0;i<D;i++) acc += Wenc[row+i]*pre[i];
+        z[j] = acc;
+      }
+      topk(z, M, K, selIdx, selVal);
+      for(let i=0;i<D;i++) xh[i] = bPre[i];
+      for(let t=0;t<K;t++){
+        const j = selIdx[t];
+        const v = z[j] > 0 ? z[j] : 0;
+        zk[t] = v;
+        if(v > 0){
+          s.lastFired[j] = s.t; s.fireCount[j]++;
+          const o = j*D;
+          for(let i=0;i<D;i++) xh[i] += Wdec[o+i]*v;
+        }
+      }
+      for(let i=0;i<D;i++){
+        const rr = xh[i] - data.Xn[off+i];
+        sse += rr*rr;
+        g[i] = rr*scale;
+      }
+      for(let t=0;t<K;t++){
+        const j = selIdx[t], v = zk[t];
+        if(v <= 0){ dz[t] = 0; continue; }
+        let acc = 0;
+        const o = j*D;
+        for(let i=0;i<D;i++){
+          const gi = g[i];
+          gWdec[o+i] += gi*v;
+          acc += gi*Wdec[o+i];
+        }
+        dz[t] = acc;
+        const row = j*D;
+        for(let i=0;i<D;i++) gWenc[row+i] += acc*pre[i];
+        gbEnc[j] += acc;
+      }
+      for(let i=0;i<D;i++){
+        let acc = g[i];
+        for(let t=0;t<K;t++){
+          if(dz[t] === 0) continue;
+          acc -= dz[t]*Wenc[selIdx[t]*D + i];
+        }
+        gbPre[i] += acc;
+      }
+    }
+    const lr = cfg.lr;
+    adam(Wenc, gWenc, s.mWenc, s.vWenc, M*D, lr, s.t);
+    adam(bEnc, gbEnc, s.mbEnc, s.vbEnc, M, lr, s.t);
+    adam(Wdec, gWdec, s.mWdec, s.vWdec, D*M, lr, s.t);
+    adam(bPre, gbPre, s.mbPre, s.vbPre, D, lr, s.t);
+    if(cfg.renorm && (s.t % 500 === 0)) normalizeDecoder(s);
+    return sse/(BATCH*D);
+  }
+
+  /* full-data reconstruction on a row range */
+  function evaluate(s, data, r0, r1){
+    const M = s.m, K = s.k;
+    const {Wenc, bEnc, Wdec, bPre, pre, z, selIdx, selVal, xh, zk} = s;
+    let sse = 0, n = 0, meanAll = 0;
+    for(let r=r0;r<r1;r++) for(let i=0;i<D;i++) meanAll += data.Xn[r*D+i];
+    meanAll /= (r1-r0)*D;
+    let tot = 0;
+    for(let r=r0;r<r1;r++){
+      const off = r*D;
+      for(let i=0;i<D;i++) pre[i] = data.Xn[off+i] - bPre[i];
+      for(let j=0;j<M;j++){
+        let acc = bEnc[j]; const row=j*D;
+        for(let i=0;i<D;i++) acc += Wenc[row+i]*pre[i];
+        z[j] = acc;
+      }
+      topk(z, M, K, selIdx, selVal);
+      for(let i=0;i<D;i++) xh[i] = bPre[i];
+      for(let t=0;t<K;t++){
+        const j = selIdx[t], v = z[j] > 0 ? z[j] : 0;
+        if(v > 0){ const o = j*D; for(let i=0;i<D;i++) xh[i] += Wdec[o+i]*v; }
+      }
+      for(let i=0;i<D;i++){
+        const rr = xh[i]-data.Xn[off+i]; sse += rr*rr;
+        const tt = data.Xn[off+i]-meanAll; tot += tt*tt;
+        n++;
+      }
+    }
+    return {mse: sse/n, ve: 1 - sse/tot};
+  }
+
+  /* recovery / precision against the ground-truth dictionary — one pass over the
+     alive-columns x true-features cosine matrix, never materialised. */
+  function dictQuality(s, data, useRaw){
+    const M = s.m;
+    const truth = useRaw ? data.G : data.Gstd;
+    const T = truth.length;
+    const alive = [];
+    for(let j=0;j<M;j++) if(s.t - s.lastFired[j] <= 500) alive.push(j);
+    const perTrue = new Float32Array(T);
+    let precSum = 0;
+    const col = new Float32Array(D);
+    for(const j of alive){
+      const o = j*D;
+      let n2 = 0;
+      for(let i=0;i<D;i++){ const v = s.Wdec[o+i]; col[i]=v; n2 += v*v; }
+      const n = Math.sqrt(n2) || 1;
+      for(let i=0;i<D;i++) col[i] /= n;
+      let bestForCol = 0;
+      for(let t=0;t<T;t++){
+        const g = truth[t];
+        let dot = 0;
+        for(let i=0;i<D;i++) dot += g[i]*col[i];
+        const a = dot < 0 ? -dot : dot;
+        if(a > perTrue[t]) perTrue[t] = a;
+        if(a > bestForCol) bestForCol = a;
+      }
+      precSum += bestForCol;
+    }
+    let recSum = 0;
+    for(let t=0;t<T;t++) recSum += perTrue[t];
+    return {recovery: recSum/Math.max(1,T),
+            precision: alive.length ? precSum/alive.length : 0,
+            perTrue, dead: M - alive.length, alive: alive.length};
+  }
+
+  return {D, NTRAIN, NHOLD, BATCH, MAXSTEPS, makeData, makeSAE, trainStep, evaluate,
+          dictQuality, normalizeDecoder};
+})();
+
+(function(){
+  const c = mkCanvas('tr-canvas'); if(!c) return;
+  const LRS = [1e-4, 3e-4, 1e-3, 3e-3, 1e-2];
+  const LRL = ['1e-4','3e-4','1e-3','3e-3','1e-2'];
+  const el = id => document.getElementById(id);
+  const ids = ['m','k','mt','s','noise','lr','seed'];   // 'speed' handled separately
+  const PRESETS = {
+    healthy:  {m:128, k:4, mt:64, s:3, noise:10, lr:2},
+    toosmall: {m:24,  k:4, mt:96, s:3, noise:10, lr:2},
+    toobig:   {m:384, k:4, mt:32, s:3, noise:10, lr:2},
+    ksmall:   {m:128, k:1, mt:64, s:6, noise:10, lr:2},
+    kbig:     {m:128, k:20, mt:64, s:3, noise:10, lr:2},
+    fliplens: {m:256, k:16, mt:96, s:6, noise:14, lr:2}
+  };
+
+  let cfg = null, data = null, sae = null, running = false, raf = 0, rng = null;
+  let lastMeasured = -1e9;
+  let metrics = {mse:NaN, ve:NaN, veho:NaN, dead:NaN, rec:NaN, prec:NaN, perTrue:null};
+
+  function readCfg(){
+    return {
+      m:+el('tr-m').value, k:+el('tr-k').value, mTrue:+el('tr-mt').value,
+      s:+el('tr-s').value, noise:+el('tr-noise').value/100,
+      lr:LRS[+el('tr-lr').value], seed:+el('tr-seed').value,
+      speed:+el('tr-speed').value,
+      renorm:el('tr-norm').checked, standardise:el('tr-std').checked,
+      rawcmp:el('tr-rawcmp').checked
+    };
+  }
+  function syncLabels(){
+    el('tr-m-v').textContent = el('tr-m').value;
+    el('tr-k-v').textContent = el('tr-k').value;
+    el('tr-mt-v').textContent = el('tr-mt').value;
+    el('tr-s-v').textContent = el('tr-s').value;
+    el('tr-noise-v').textContent = (+el('tr-noise').value/100).toFixed(2);
+    el('tr-lr-v').textContent = LRL[+el('tr-lr').value];
+    el('tr-seed-v').textContent = el('tr-seed').value;
+    el('tr-speed-v').textContent = el('tr-speed').value;
+  }
+
+  function reset(){
+    stop();
+    cfg = readCfg();
+    if(cfg.k > cfg.m){ cfg.k = cfg.m; el('tr-k').value = String(cfg.k); syncLabels(); }
+    data = SAELab.makeData(cfg);
+    sae = SAELab.makeSAE(cfg, data);
+    rng = mulberry32(cfg.seed*31337 + 5);
+    metrics = {mse:NaN, ve:NaN, veho:NaN, dead:NaN, rec:NaN, prec:NaN, perTrue:null};
+    sae.hist = [];
+    lastMeasured = -1e9;
+    setText('tr-status','idle · ' + cfg.m + ' features, k=' + cfg.k);
+    updateStats(); draw();
+  }
+  function measure(){
+    const tr = SAELab.evaluate(sae, data, 0, 600);
+    const ho = SAELab.evaluate(sae, data, SAELab.NTRAIN, SAELab.NTRAIN + SAELab.NHOLD);
+    const q = SAELab.dictQuality(sae, data, cfg.rawcmp);
+    metrics = {mse:tr.mse, ve:tr.ve, veho:ho.ve, dead:q.dead, rec:q.recovery,
+               prec:q.precision, perTrue:q.perTrue};
+  }
+  function updateStats(){
+    setText('tr-step', String(sae ? sae.t : 0));
+    setText('tr-mse', fmt(metrics.mse,4));
+    setText('tr-ve', fmt(metrics.ve,4));
+    setText('tr-veho', fmt(metrics.veho,4));
+    setText('tr-dead', isFinite(metrics.dead) ? metrics.dead + ' / ' + cfg.m : '—');
+    setText('tr-rec', fmt(metrics.rec,3));
+    setText('tr-prec', fmt(metrics.prec,3));
+  }
+
+  function frame(){
+    if(!running) return;
+    const n = Math.min(cfg.speed, SAELab.MAXSTEPS - sae.t);
+    let last = NaN;
+    for(let i=0;i<n;i++) last = SAELab.trainStep(sae, data, cfg, rng);
+    if(isFinite(last) && (sae.hist.length === 0 || sae.t - sae.hist[sae.hist.length-1].t >= 20)){
+      sae.hist.push({t:sae.t, mse:last});
+      if(sae.hist.length > 400) sae.hist = sae.hist.filter((_,i)=>i%2===0);
+    }
+    // the dictionary-quality metrics are O(alive x true x d); measuring them every
+    // frame would cost more than the training does, so throttle to every 100 steps
+    const done = sae.t >= SAELab.MAXSTEPS;
+    if(done || sae.t - lastMeasured >= 100){ lastMeasured = sae.t; measure(); }
+    updateStats(); draw();
+    if(done){ stop(); setText('tr-status','converged · ' + sae.t + ' steps'); return; }
+    setText('tr-status','training · step ' + sae.t);
+    raf = requestAnimationFrame(frame);
+  }
+  function start(){
+    if(running) return;
+    if(!sae || sae.t >= SAELab.MAXSTEPS) reset();
+    running = true; el('tr-run').textContent = 'Pause';
+    raf = requestAnimationFrame(frame);
+  }
+  function stop(){
+    running = false; cancelAnimationFrame(raf);
+    const b = el('tr-run'); if(b) b.textContent = 'Train';
+  }
+
+  function draw(){
+    clear(c);
+    const ctx = c.ctx, H = c.H;
+    const PADX = 26, GAPX = 30, TOP = 26, BOT = 30;
+    const PANW = Math.floor((c.W - 2*PADX - 2*GAPX) / 3);
+    const ph = H - TOP - BOT;
+
+    // ---- (a) loss curve ----
+    let x0 = PADX;
+    txt(ctx,'BATCH MSE  (log scale)', x0, TOP-9, {size:10, color:C.ink3, weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(x0, TOP, PANW, ph); ctx.restore();
+    if(sae && sae.hist.length > 1){
+      const hs = sae.hist;
+      let lo = Infinity, hi = -Infinity;
+      hs.forEach(h => { const v = Math.log10(Math.max(h.mse,1e-6)); if(v<lo)lo=v; if(v>hi)hi=v; });
+      if(hi - lo < 0.5){ hi = lo + 0.5; }
+      ctx.save(); ctx.strokeStyle = C.blue; ctx.lineWidth = 1.6; ctx.beginPath();
+      hs.forEach((h,i) => {
+        const px = x0 + h.t/SAELab.MAXSTEPS*PANW;
+        const py = TOP + ph - (Math.log10(Math.max(h.mse,1e-6)) - lo)/(hi-lo)*(ph-6) - 3;
+        i ? ctx.lineTo(px,py) : ctx.moveTo(px,py);
+      });
+      ctx.stroke(); ctx.restore();
+      txt(ctx, '10^'+hi.toFixed(1), x0+4, TOP+11, {size:9.5, color:C.ink3, font:MONO});
+      txt(ctx, '10^'+lo.toFixed(1), x0+4, TOP+ph-5, {size:9.5, color:C.ink3, font:MONO});
+      // renorm markers
+      if(cfg.renorm) for(let s=500;s<=SAELab.MAXSTEPS && s<=sae.t;s+=500){
+        line(ctx, x0+s/SAELab.MAXSTEPS*PANW, TOP, x0+s/SAELab.MAXSTEPS*PANW, TOP+ph, C.ruleSoft, 1, [2,3]);
+      }
+    } else {
+      txt(ctx,'press Train', x0+PANW/2, TOP+ph/2, {size:12, color:C.ink3, align:'center'});
+    }
+    txt(ctx,'0', x0, TOP+ph+13, {size:9.5, color:C.ink3, font:MONO});
+    txt(ctx,'3000 steps', x0+PANW, TOP+ph+13, {size:9.5, color:C.ink3, font:MONO, align:'right'});
+
+    // ---- (b) per-true-feature recovery ----
+    x0 = PADX + PANW + GAPX;
+    txt(ctx,'RECOVERY OF EACH TRUE FEATURE  (max |cos|)', x0, TOP-9, {size:10, color:C.ink3, weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(x0, TOP, PANW, ph); ctx.restore();
+    for(const g of [0.25,0.5,0.75]){
+      line(ctx, x0, TOP+ph-g*ph, x0+PANW, TOP+ph-g*ph, C.ruleSoft, 1, [2,3]);
+      txt(ctx, g.toFixed(2), x0+PANW-3, TOP+ph-g*ph-3, {size:9, color:C.ink3, font:MONO, align:'right'});
+    }
+    if(metrics.perTrue){
+      const v = Array.from(metrics.perTrue).sort((a,b)=>b-a);
+      const bw = PANW/v.length;
+      v.forEach((val,i)=>{
+        const h = val*ph;
+        ctx.fillStyle = val > 0.9 ? C.ok : (val > 0.7 ? C.amber : C.warn);
+        ctx.fillRect(x0+i*bw, TOP+ph-h, Math.max(1,bw-0.6), h);
+      });
+      line(ctx, x0, TOP+ph-metrics.rec*ph, x0+PANW, TOP+ph-metrics.rec*ph, C.blue, 1.4);
+      txt(ctx,'mean '+fmt(metrics.rec,2), x0+4, TOP+ph-metrics.rec*ph-4, {size:9.5, color:C.blue, font:MONO});
+    }
+    txt(ctx,'true features, best-recovered first', x0, TOP+ph+13, {size:9.5, color:C.ink3});
+
+    // ---- (c) dictionary usage ----
+    x0 = PADX + 2*(PANW + GAPX);
+    txt(ctx,'HOW OFTEN EACH DICTIONARY ENTRY FIRES', x0, TOP-9, {size:10, color:C.ink3, weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(x0, TOP, PANW, ph); ctx.restore();
+    if(sae && sae.t > 0){
+      const fc = Array.from(sae.fireCount);
+      const mx = Math.max(1, ...fc);
+      const bw = PANW/sae.m;
+      for(let j=0;j<sae.m;j++){
+        const dead = (sae.t - sae.lastFired[j]) > 500;
+        const h = Math.sqrt(fc[j]/mx)*ph;
+        ctx.fillStyle = dead ? C.warn : C.blue;
+        ctx.globalAlpha = dead ? 0.75 : 0.85;
+        ctx.fillRect(x0+j*bw, TOP+ph-Math.max(h,dead?2:0), Math.max(1,bw-0.5), Math.max(h,dead?2:0));
+        ctx.globalAlpha = 1;
+      }
+      if(isFinite(metrics.dead))
+        txt(ctx, metrics.dead + ' dead', x0+PANW-4, TOP+12, {size:10, color:C.warn, font:MONO, align:'right'});
+    }
+    txt(ctx,'dictionary index (√ scale)', x0, TOP+ph+13, {size:9.5, color:C.ink3});
+  }
+
+  ids.forEach(k => el('tr-'+k).addEventListener('input', () => { syncLabels(); reset(); }));
+  el('tr-speed').addEventListener('input', () => {   // pace only; never restart the run
+    syncLabels(); if(cfg) cfg.speed = +el('tr-speed').value;
+  });
+  ['tr-norm','tr-std'].forEach(k => el(k).addEventListener('change', reset));
+  el('tr-rawcmp').addEventListener('change', () => { cfg = readCfg(); if(sae && sae.t>0){ measure(); updateStats(); draw(); } });
+  el('tr-run').addEventListener('click', () => running ? (stop(), setText('tr-status','paused · step '+sae.t)) : start());
+  el('tr-reset').addEventListener('click', reset);
+  document.querySelectorAll('#p-train .chip').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#p-train .chip').forEach(x => x.setAttribute('aria-pressed','false'));
+      b.setAttribute('aria-pressed','true');
+      const p = PRESETS[b.dataset.preset];
+      el('tr-m').value = p.m; el('tr-k').value = p.k; el('tr-mt').value = p.mt;
+      el('tr-s').value = p.s; el('tr-noise').value = p.noise; el('tr-lr').value = p.lr;
+      syncLabels(); reset();
+    });
+  });
+  onTheme(draw);
+  syncLabels(); reset();
+  window.__saeTrainer = {getData:()=>data, getCfg:()=>cfg};
+})();
+
+/* ==========================================================================
+   05 — The sparsity / fidelity frontier
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('fr-canvas'); if(!c) return;
+  const KS = [1,2,3,4,6,8,12,16,24];
+  let results = [], busy = false, runToken = 0;
+
+  function run(){
+    if(busy) return;
+    busy = true; results = []; const token = ++runToken;
+    const base = window.__saeTrainer ? window.__saeTrainer.getCfg() : null;
+    const cfg0 = base ? Object.assign({}, base) : {m:128,k:4,mTrue:64,s:3,noise:0.10,lr:1e-3,seed:0,renorm:true,standardise:true,rawcmp:false};
+    const data = SAELab.makeData(cfg0);
+    let i = 0;
+    const STEPS = 900;
+    function next(){
+      if(token !== runToken){ busy = false; return; }
+      if(i >= KS.length){ busy = false; setText('fr-status','done · ' + KS.length + ' autoencoders'); draw(); return; }
+      const cfg = Object.assign({}, cfg0, {k:Math.min(KS[i], cfg0.m)});
+      const sae = SAELab.makeSAE(cfg, data);
+      const rng = mulberry32(cfg.seed*31337 + 5);
+      setText('fr-status','training k = ' + cfg.k + '  (' + (i+1) + '/' + KS.length + ')');
+      let done = 0;
+      function chunk(){
+        if(token !== runToken){ busy = false; return; }
+        const n = Math.min(120, STEPS - done);
+        for(let t=0;t<n;t++) SAELab.trainStep(sae, data, cfg, rng);
+        done += n;
+        if(done < STEPS){ requestAnimationFrame(chunk); return; }
+        const ho = SAELab.evaluate(sae, data, SAELab.NTRAIN, SAELab.NTRAIN + SAELab.NHOLD);
+        const q = SAELab.dictQuality(sae, data, false);
+        results.push({k:cfg.k, fvu:Math.max(0, 1-ho.ve), rec:q.recovery, dead:q.dead});
+        draw(); i++; requestAnimationFrame(next);
+      }
+      requestAnimationFrame(chunk);
+    }
+    next();
+  }
+
+  function draw(){
+    clear(c);
+    const ctx = c.ctx, W = c.W, H = c.H;
+    const L = 62, R = 62, T = 26, B = 44;
+    const pw = W - L - R, ph = H - T - B;
+    ctx.save(); ctx.strokeStyle = C.ruleSoft; ctx.strokeRect(L, T, pw, ph); ctx.restore();
+
+    const xOf = k => L + (Math.log2(k) / Math.log2(24)) * pw;
+    for(const k of KS){
+      line(ctx, xOf(k), T, xOf(k), T+ph, C.ruleSoft, 1, [2,4]);
+      txt(ctx, String(k), xOf(k), T+ph+15, {size:10, color:C.ink3, font:MONO, align:'center'});
+    }
+    txt(ctx,'L0  =  k  (log axis)', L+pw/2, T+ph+34, {size:11, color:C.ink2, align:'center'});
+    txt(ctx,'FRACTION OF VARIANCE UNEXPLAINED (held out)', L, T-9, {size:10, color:C.blue, weight:'600'});
+    txt(ctx,'GROUND-TRUTH RECOVERY', L+pw, T-9, {size:10, color:C.amber, weight:'600', align:'right'});
+
+    if(!results.length){
+      txt(ctx,'press Run sweep', L+pw/2, T+ph/2, {size:12, color:C.ink3, align:'center'});
+      return;
+    }
+    const maxF = Math.max(0.05, ...results.map(r=>r.fvu));
+    for(let g=0; g<=4; g++){
+      const yy = T + ph - g/4*ph;
+      line(ctx, L, yy, L+pw, yy, C.ruleSoft, 1);
+      txt(ctx, (g/4*maxF).toFixed(3), L-5, yy+3, {size:9.5, color:C.blue, font:MONO, align:'right'});
+      txt(ctx, (g/4).toFixed(2), L+pw+5, yy+3, {size:9.5, color:C.amber, font:MONO});
+    }
+    // FVU line
+    ctx.save(); ctx.strokeStyle=C.blue; ctx.lineWidth=1.8; ctx.beginPath();
+    results.forEach((r,i)=>{ const px=xOf(r.k), py=T+ph-(r.fvu/maxF)*ph; i?ctx.lineTo(px,py):ctx.moveTo(px,py); });
+    ctx.stroke(); ctx.restore();
+    results.forEach(r=>{ const px=xOf(r.k), py=T+ph-(r.fvu/maxF)*ph;
+      ctx.fillStyle=C.blue; ctx.beginPath(); ctx.arc(px,py,3.4,0,6.284); ctx.fill(); });
+    // recovery line
+    ctx.save(); ctx.strokeStyle=C.amber; ctx.lineWidth=1.8; ctx.setLineDash([5,3]); ctx.beginPath();
+    results.forEach((r,i)=>{ const px=xOf(r.k), py=T+ph-r.rec*ph; i?ctx.lineTo(px,py):ctx.moveTo(px,py); });
+    ctx.stroke(); ctx.restore();
+    results.forEach(r=>{ const px=xOf(r.k), py=T+ph-r.rec*ph;
+      ctx.fillStyle=C.amber; ctx.beginPath(); ctx.arc(px,py,3.4,0,6.284); ctx.fill(); });
+
+    // mark the peak of recovery
+    const best = results.reduce((a,b)=>b.rec>a.rec?b:a, results[0]);
+    const bx = xOf(best.k);
+    line(ctx, bx, T, bx, T+ph, C.amber, 1.2, [3,3]);
+    const flip = bx > L + pw*0.62;
+    txt(ctx,'recovery peaks at k = '+best.k, bx + (flip ? -6 : 6), T+14,
+        {size:10.5, color:C.amber, weight:'600', align: flip ? 'right' : 'left'});
+  }
+
+  document.getElementById('fr-run').addEventListener('click', run);
+  document.getElementById('fr-clear').addEventListener('click', ()=>{
+    runToken++; busy = false; results = [];
+    setText('fr-status','press Run sweep'); draw();
+  });
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   06a — Point-biserial: effect size, sample size, selection
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('pb-canvas'); if(!c) return;
+  const MS = [1, 20, 256, 2048];
+  const el = id => document.getElementById(id);
+  let cache = null;
+
+  function pointBiserial(x, y){
+    const n = x.length;
+    let mx=0, my=0;
+    for(let i=0;i<n;i++){ mx+=x[i]; my+=y[i]; }
+    mx/=n; my/=n;
+    let sxy=0, sxx=0, syy=0;
+    for(let i=0;i<n;i++){ const a=x[i]-mx, b=y[i]-my; sxy+=a*b; sxx+=a*a; syy+=b*b; }
+    return (sxx>0 && syy>0) ? sxy/Math.sqrt(sxx*syy) : 0;
+  }
+
+  let drawSeed = 20260808;
+  function compute(){
+    const sep = +el('pb-sep').value/10;
+    const npos = +el('pb-npos').value;
+    const ntot = Math.max(npos+5, +el('pb-ntot').value);
+    const mIdx = +el('pb-max').value;
+    const m = MS[mIdx];
+    el('pb-sep-v').textContent = sep.toFixed(2);
+    el('pb-npos-v').textContent = npos;
+    el('pb-ntot-v').textContent = ntot;
+    el('pb-max-v').textContent = m === 1 ? '1' : m.toLocaleString();
+
+    const rng = mulberry32(drawSeed), gauss = mkGauss(rng);
+
+    const y = new Float64Array(ntot);
+    for(let i=0;i<ntot;i++) y[i] = i < npos ? 1 : 0;
+
+    // the single draw the left panel shows — kept, not reused as scratch
+    const shown = new Float64Array(ntot);
+    for(let i=0;i<ntot;i++) shown[i] = gauss() + (i<npos ? sep : 0);
+    const rOne = pointBiserial(shown, y);
+
+    // sampling distribution of r at this effect size
+    const T = 2000, rs = new Float64Array(T), scratch = new Float64Array(ntot);
+    for(let t=0;t<T;t++){
+      for(let i=0;i<ntot;i++) scratch[i] = gauss() + (i<npos ? sep : 0);
+      rs[t] = pointBiserial(scratch, y);
+    }
+    const rsS = Array.from(rs).sort((a,b)=>a-b);
+
+    // Under H0 the point-biserial is the cosine between two centred vectors in n-1
+    // dimensions, so r^2 ~ Beta(1/2,(n-2)/2) exactly — the same law NullLab samples.
+    // Inverse transform means max-of-2048 costs the same as max-of-1.
+    const nullS = Array.from(NullLab.sampleMax(ntot-1, 1, 1500));
+    const selS  = Array.from(NullLab.sampleMax(ntot-1, m, 1500));
+
+    cache = {sep, npos, ntot, m, rOne, x:Array.from(shown), y:Array.from(y), rsS, nullS, selS};
+
+    setText('pb-r', fmt(rOne,3));
+    setText('pb-ci', fmt(quantile(rsS,0.025),2) + '–' + fmt(quantile(rsS,0.975),2));
+    setText('pb-null', fmt(quantile(nullS,0.95),3));
+    setText('pb-selnull', fmt(quantile(selS,0.95),3));
+    const co = document.getElementById('pb-callout');
+    if(co && m === 2048) co.textContent = fmt(quantile(selS,0.5),2);
+  }
+
+  function draw(){
+    if(!cache) return;
+    clear(c);
+    const ctx = c.ctx, W = c.W, H = c.H;
+    const T = 30, B = 40;
+    const ph = H - T - B;
+
+    // --- left: one draw, activation by group ---
+    const L1 = 34, W1 = 400;
+    txt(ctx,'ONE DRAW · PER-CLUSTER MEAN FEATURE ACTIVATION', L1, T-10, {size:10, color:C.ink3, weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(L1, T, W1, ph); ctx.restore();
+    const lo = -3.4, hi = 3.4 + cache.sep;
+    const px = v => L1 + (v-lo)/(hi-lo)*W1;
+    line(ctx, px(0), T, px(0), T+ph, C.ruleSoft, 1, [2,3]);
+    const rowStable = T + ph*0.66, rowFlip = T + ph*0.28;
+    txt(ctx,'stable clusters', L1+6, rowStable+22, {size:10, color:C.ink3});
+    txt(ctx,'flipped clusters', L1+6, rowFlip-14, {size:10, color:C.amber});
+    const rng2 = mulberry32(77);
+    cache.x.forEach((v,i)=>{
+      const flip = cache.y[i] === 1;
+      const yy = (flip ? rowFlip : rowStable) + (rng2()-0.5)*30;
+      ctx.fillStyle = flip ? C.amber : C.grey;
+      ctx.globalAlpha = flip ? 0.9 : 0.45;
+      ctx.beginPath(); ctx.arc(px(v), yy, flip?2.8:2, 0, 6.284); ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+    line(ctx, px(cache.sep), rowFlip-32, px(cache.sep), rowFlip+32, C.amber, 1.4);
+    line(ctx, px(0), rowStable-32, px(0), rowStable+32, C.grey, 1.4);
+    txt(ctx,'r = '+fmt(cache.rOne,3), L1+W1-6, T+16, {size:12, color:C.blue, font:MONO, align:'right', weight:'600'});
+
+    // --- right: sampling distribution + nulls ---
+    const L2 = 480, W2 = W - L2 - 30;
+    txt(ctx,'SAMPLING DISTRIBUTION OF r', L2, T-10, {size:10, color:C.ink3, weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(L2, T, W2, ph); ctx.restore();
+    const lo2 = -0.25, hi2 = 1.0;
+    const px2 = v => L2 + (v-lo2)/(hi2-lo2)*W2;
+    const NB = 60;
+    function hist(arr, color, alpha, absolute){
+      const bins = new Array(NB).fill(0);
+      arr.forEach(v => {
+        const w = absolute ? Math.abs(v) : v;
+        const b = Math.floor((w-lo2)/(hi2-lo2)*NB);
+        if(b>=0 && b<NB) bins[b]++;
+      });
+      const mx = Math.max(1, ...bins);
+      const bw = W2/NB;
+      ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = color;
+      bins.forEach((v,i)=>{ const h=v/mx*(ph-24); ctx.fillRect(L2+i*bw, T+ph-h, Math.max(1,bw-0.8), h); });
+      ctx.restore();
+      return mx;
+    }
+    hist(cache.selS, C.grey, 0.85, false);
+    hist(cache.rsS, C.blue, 0.75, false);
+
+    for(let g=0; g<=5; g++){
+      const v = lo2 + g/5*(hi2-lo2);
+      line(ctx, px2(v), T+ph, px2(v), T+ph+4, C.rule, 1);
+      txt(ctx, v.toFixed(2), px2(v), T+ph+16, {size:9.5, color:C.ink3, font:MONO, align:'center'});
+    }
+    const p95 = quantile(cache.selS, 0.95);
+    line(ctx, px2(p95), T, px2(p95), T+ph, C.warn, 1.4, [4,3]);
+    txt(ctx,'null 95th pct '+fmt(p95,2), px2(p95)+5, T+14, {size:10, color:C.warn, weight:'600'});
+    txt(ctx,'best of '+(cache.m===1?'1':cache.m.toLocaleString())+' noise features', L2+6, T+ph-8, {size:10, color:C.ink3});
+    txt(ctx,'r with a real effect', L2+6, T+ph-24, {size:10, color:C.blue});
+    txt(ctx,'point-biserial r', L2+W2/2, T+ph+34, {size:11, color:C.ink2, align:'center'});
+  }
+
+  // changing n rebuilds NullLab's cached base sample, so debounce the slider drag
+  const recompute = debounce(()=>{ compute(); draw(); }, 110);
+  ['pb-sep','pb-npos','pb-max'].forEach(id =>
+    document.getElementById(id).addEventListener('input', ()=>{ compute(); draw(); }));
+  document.getElementById('pb-ntot').addEventListener('input', ()=>{
+    el('pb-ntot-v').textContent = el('pb-ntot').value; recompute();
+  });
+  document.getElementById('pb-resample').addEventListener('click', ()=>{
+    drawSeed = (drawSeed * 1103515245 + 12345) >>> 0;   // a genuinely new draw
+    compute(); draw();
+  });
+  onTheme(draw);
+  compute(); draw();
+})();
+
+/* ==========================================================================
+   06b — Register selectivity, from the actual JSONs
+   ========================================================================== */
+const SAE_RUNS = {
+  nano: {
+    label:'results/sae', model:'nanoVLM probe', feature:991,
+    layer:1, dict:2048, topk:16, varExplained:0.9980046153068542,
+    nExamples:1323, nFlip:14,
+    bestCos:{feature:2022, cos:-0.7900864481925964, pb:-0.11021800420916784},
+    bestPb:{feature:991, pb:0.3954428709480853, cos:-0.15834960341453552},
+    pca20:0.8827956914901733, randMean:0.041510815889925376,
+    registers:{original:0.007938330993056297, lexical_substitution:0.011612407863140106,
+      scope_quantification:0.006512104999274015, syntactic_restructuring:0.012612571939826012,
+      negation_pattern:0.012733783572912216, specificity_modulation:0.00596993463113904}
+  },
+  gemma: {
+    label:'results_gemma/sae_gemma', model:'1,841-question probe', feature:439,
+    layer:1, dict:2048, topk:16, varExplained:0.9987319707870483,
+    nExamples:1323, nFlip:26,
+    bestCos:{feature:13, cos:-0.7370408773422241, pb:0.42207317384122156},
+    bestPb:{feature:439, pb:0.4327838936496529, cos:0.15489038825035095},
+    pca20:0.5193287134170532, randMean:0.04276863217013796,
+    registers:{original:0.023720625787973404, lexical_substitution:0.07094349712133408,
+      scope_quantification:0.06112198159098625, syntactic_restructuring:0.04304799437522888,
+      negation_pattern:0.02968856506049633, specificity_modulation:0.01291138306260109}
+  },
+  transfer: {
+    label:'results_transfer/sae', model:'scaled grounded model', feature:423,
+    layer:1, dict:2048, topk:16, varExplained:0.9907390475273132,
+    nExamples:73500, nFlip:81,
+    bestCos:{feature:186, cos:0.5931432247161865, pb:-0.05738330248092559},
+    bestPb:{feature:423, pb:0.1326973476861089, cos:0.012876035645604134},
+    pca20:0.47411084175109863, randMean:0.04231157098723644,
+    registers:{original:0.09179563075304031, lexical_substitution:0.09012109041213989,
+      syntactic_restructuring:0.0886094868183136, scope_quantification:0.09037743508815765,
+      specificity_modulation:0.09117362648248672}
+  }
+};
+
+(function(){
+  const c = mkCanvas('reg-canvas'); if(!c) return;
+  let cur = 'gemma';
+  const FOOTS = {
+    gemma:'Feature 439 fires 5.5× more on lexical substitution (0.0709) than on specificity modulation (0.0129), which is the lowest of the six; the original phrasing is second lowest at 0.0237. That ordering is what a register-sensitive feature is supposed to look like — and this is the run the README quotes.',
+    nano:'Feature 991 peaks on negation and syntactic restructuring, but the whole range is 0.006 to 0.013 — its maximum is 5.6× smaller than the gemma run’s. On an unnormalised mean over raw activations, differences this small are not safely interpretable.',
+    transfer:'On the scaled model the top flip feature is essentially flat across every register: 0.0886 to 0.0918, a 3.6% spread over the minimum. It is not a register detector at all. Note also that negation_pattern is absent here — the newer paraphrase bank keeps answer-inverting variants out of clusters entirely.'
+  };
+  function draw(){
+    clear(c);
+    const ctx = c.ctx, W = c.W, H = c.H;
+    const run = SAE_RUNS[cur];
+    const keys = Object.keys(run.registers);
+    const vals = keys.map(k => run.registers[k]);
+    const mx = Math.max(...vals), mn = Math.min(...vals);
+    const L = 60, R = 30, T = 34, B = 62;
+    const pw = W-L-R, ph = H-T-B;
+    txt(ctx, 'MEAN ACTIVATION OF FEATURE ' + run.feature + ' · ' + run.label,
+        L, T-12, {size:10.5, color:C.ink3, weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(L,T,pw,ph); ctx.restore();
+    for(let g=0;g<=4;g++){
+      const yy = T+ph-g/4*ph;
+      line(ctx, L, yy, L+pw, yy, C.ruleSoft, 1);
+      txt(ctx,(g/4*mx).toFixed(3), L-6, yy+3, {size:9.5, color:C.ink3, font:MONO, align:'right'});
+    }
+    const bw = pw/keys.length;
+    keys.forEach((k,i)=>{
+      const h = vals[i]/mx*ph;
+      const isMax = vals[i]===mx, isMin = vals[i]===mn;
+      ctx.fillStyle = isMax ? C.blue : (isMin ? C.grey : C.blue);
+      ctx.globalAlpha = isMax ? 1 : (isMin ? 0.55 : 0.75);
+      ctx.fillRect(L+i*bw+bw*0.14, T+ph-h, bw*0.72, h);
+      ctx.globalAlpha = 1;
+      txt(ctx, vals[i].toFixed(4), L+i*bw+bw/2, T+ph-h-6, {size:10, color:C.ink2, font:MONO, align:'center'});
+      const label = (PHEN_LABEL[k]||k).split(' ');
+      label.forEach((w,li)=> txt(ctx, w, L+i*bw+bw/2, T+ph+16+li*12, {size:10, color:C.ink3, align:'center'}));
+    });
+    setText('reg-ratio', fmt(mx/mn, 2) + '×');
+    setText('reg-top', (PHEN_LABEL[keys[vals.indexOf(mx)]]||'').replace(' (excluded)',''));
+    setText('reg-spread', (mx-mn).toFixed(4));
+    const f = document.getElementById('reg-foot'); if(f) f.textContent = FOOTS[cur];
+  }
+  document.querySelectorAll('#p-reg .chip').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      document.querySelectorAll('#p-reg .chip').forEach(x=>x.setAttribute('aria-pressed','false'));
+      b.setAttribute('aria-pressed','true'); cur = b.dataset.reg; draw();
+    });
+  });
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   07 — The null distribution of a maximum
+   ========================================================================== */
+
+(function(){
+  const c = mkCanvas('nl-canvas'); if(!c) return;
+  const el = id => document.getElementById(id);
+  let cur = null;
+
+  function compute(){
+    const d = +el('nl-d').value;
+    const m = Math.pow(2, +el('nl-m').value);
+    const trials = +el('nl-trials').value;
+    el('nl-d-v').textContent = d;
+    el('nl-m-v').textContent = m.toLocaleString();
+    el('nl-trials-v').textContent = trials.toLocaleString();
+    const s = NullLab.sampleMax(d, m, trials);
+    let mean = 0; for(let i=0;i<s.length;i++) mean += s[i]; mean /= s.length;
+    cur = {d, m, trials, s, mean, p95:quantile(s,0.95), p99:quantile(s,0.99)};
+    setText('nl-mean', fmt(mean,4));
+    setText('nl-p95', fmt(cur.p95,4));
+    setText('nl-p99', fmt(cur.p99,4));
+    setText('nl-asym', fmt(Math.sqrt(2*Math.log(2*m)/d),4));
+  }
+
+  function draw(){
+    if(!cur) return;
+    clear(c);
+    const ctx = c.ctx, W = c.W, H = c.H;
+    const L = 56, R = 30, T = 32, B = 56;
+    const pw = W-L-R, ph = H-T-B;
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(L,T,pw,ph); ctx.restore();
+    const hi = Math.max(0.82, cur.p99*1.35);
+    const px = v => L + v/hi*pw;
+
+    const NB = 90, bins = new Array(NB).fill(0);
+    for(let i=0;i<cur.s.length;i++){
+      const b = Math.floor(cur.s[i]/hi*NB);
+      if(b>=0 && b<NB) bins[b]++;
+    }
+    const mxb = Math.max(1, ...bins);
+    const bw = pw/NB;
+    ctx.save(); ctx.fillStyle = C.grey; ctx.globalAlpha = 0.8;
+    bins.forEach((v,i)=>{ const h=v/mxb*(ph-18); ctx.fillRect(L+i*bw, T+ph-h, Math.max(1,bw-0.6), h); });
+    ctx.restore();
+
+    for(let g=0; g<=8; g++){
+      const v = g/8*hi;
+      line(ctx, px(v), T+ph, px(v), T+ph+4, C.rule, 1);
+      txt(ctx, v.toFixed(2), px(v), T+ph+17, {size:9.5, color:C.ink3, font:MONO, align:'center'});
+    }
+    txt(ctx,'|cos| between the flip direction and the best of m candidates',
+        L+pw/2, T+ph+38, {size:11, color:C.ink2, align:'center'});
+    txt(ctx,'NULL DISTRIBUTION OF max |cos| · d = '+cur.d+' · m = '+cur.m.toLocaleString(),
+        L, T-11, {size:10.5, color:C.ink3, weight:'600'});
+
+    function marker(v, color, label, up){
+      if(v > hi) return;
+      const mv = px(v);
+      line(ctx, mv, T, mv, T+ph, color, 1.6);
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(mv, T+ph); ctx.lineTo(mv-5, T+ph+9); ctx.lineTo(mv+5, T+ph+9);
+      ctx.closePath(); ctx.fill(); ctx.restore();
+      const flip = mv > L + pw*0.55;                 // label would run off the right edge
+      txt(ctx, label, mv + (flip ? -6 : 6), T + (up?16:32),
+          {size:10.5, color:color, weight:'600', align: flip ? 'right' : 'left'});
+    }
+    line(ctx, px(cur.p95), T, px(cur.p95), T+ph, C.warn, 1.2, [4,3]);
+    txt(ctx,'95th pct '+fmt(cur.p95,3), px(cur.p95)+5, T+ph-10, {size:10, color:C.warn});
+    if(Math.abs(cur.d-384) < 40){
+      marker(0.7370, C.blue, 'SAE best-of-2048  0.737', true);
+      marker(0.5193, C.amber, 'PCA best-of-20  0.519', false);
+    }
+    // asymptotic
+    const asym = Math.sqrt(2*Math.log(2*cur.m)/cur.d);
+    if(asym <= hi){
+      line(ctx, px(asym), T+ph*0.05, px(asym), T+ph, C.ink3, 1, [2,3]);
+      txt(ctx,'√(2 ln 2m / d)', px(asym)+4, T+ph*0.05+10, {size:9.5, color:C.ink3});
+    }
+  }
+  // building a fresh 200k base sample for a new d costs ~100ms, so dragging the
+  // dimension slider must not recompute on every input event
+  const recompute = debounce(()=>{ compute(); draw(); }, 130);
+  document.getElementById('nl-d').addEventListener('input', ()=>{
+    el('nl-d-v').textContent = el('nl-d').value; recompute();
+  });
+  document.getElementById('nl-trials').addEventListener('input', ()=>{
+    el('nl-trials-v').textContent = (+el('nl-trials').value).toLocaleString(); recompute();
+  });
+  document.getElementById('nl-m').addEventListener('input', ()=>{ compute(); draw(); });
+  onTheme(draw);
+  compute(); draw();
+})();
+
+/* ==========================================================================
+   08 — The alignment chart, with corrected nulls
+   ========================================================================== */
+(function(){
+  const c = mkCanvas('cmp-canvas'); if(!c) return;
+  let cur = 'gemma';
+  const nullCache = {};
+  function nulls(){
+    if(nullCache.done) return nullCache;
+    const s1 = NullLab.sampleMax(384, 1, 20000);
+    const s20 = NullLab.sampleMax(384, 20, 20000);
+    const s2048 = NullLab.sampleMax(384, 2048, 20000);
+    const mean = a => { let s=0; for(let i=0;i<a.length;i++) s+=a[i]; return s/a.length; };
+    Object.assign(nullCache, {done:true,
+      m1:mean(s1), m20:mean(s20), m2048:mean(s2048),
+      p1:quantile(s1,0.95), p20:quantile(s20,0.95), p2048:quantile(s2048,0.95)});
+    return nullCache;
+  }
+  function draw(){
+    clear(c);
+    const ctx = c.ctx, W = c.W, H = c.H;
+    const run = SAE_RUNS[cur];
+    const N = nulls();
+    const showNull = document.getElementById('cmp-null').checked;
+    const bars = [
+      {label:'SAE feature', sub:'best of 2048', v:Math.abs(run.bestCos.cos), color:C.blue, nullV:N.m2048, nullP:N.p2048},
+      {label:'PCA', sub:'best of top 20', v:run.pca20, color:C.amber, nullV:N.m20, nullP:N.p20},
+      {label:'Random direction', sub:'mean of one', v:run.randMean, color:C.grey, nullV:N.m1, nullP:null}
+    ];
+    const L = 70, R = 34, T = 34, B = 62;
+    const pw = W-L-R, ph = H-T-B;
+    txt(ctx,'|cosine| WITH THE CAUSAL FLIP DIRECTION · '+run.label+' · '+run.model,
+        L, T-12, {size:10.5, color:C.ink3, weight:'600'});
+    ctx.save(); ctx.strokeStyle=C.ruleSoft; ctx.strokeRect(L,T,pw,ph); ctx.restore();
+    const hi = 1.0;
+    for(let g=0;g<=5;g++){
+      const yy = T+ph-g/5*ph;
+      line(ctx, L, yy, L+pw, yy, C.ruleSoft, 1);
+      txt(ctx,(g/5).toFixed(1), L-6, yy+3, {size:9.5, color:C.ink3, font:MONO, align:'right'});
+    }
+    const bw = pw/bars.length;
+    bars.forEach((b,i)=>{
+      const cx = L + i*bw + bw/2;
+      const w = bw*0.42;
+      const h = b.v/hi*ph;
+      if(showNull && b.nullP != null){
+        const nh = b.nullP/hi*ph;
+        ctx.save(); ctx.fillStyle = C.grey; ctx.globalAlpha=0.28;
+        ctx.fillRect(cx-w/2-10, T+ph-nh, w+20, nh); ctx.restore();
+        line(ctx, cx-w/2-10, T+ph-nh, cx+w/2+10, T+ph-nh, C.warn, 1.4, [4,3]);
+        txt(ctx,'chance ceiling '+fmt(b.nullP,2), cx, T+ph-nh-6, {size:9.5, color:C.warn, align:'center', font:MONO});
+      }
+      ctx.fillStyle = b.color;
+      ctx.fillRect(cx-w/2, T+ph-h, w, h);
+      txt(ctx, b.v.toFixed(3), cx, T+ph-h-(showNull && b.nullP != null && b.nullP>b.v ? 20 : 8),
+          {size:13, color:b.color, align:'center', font:MONO, weight:'600'});
+      txt(ctx, b.label, cx, T+ph+18, {size:11.5, color:C.ink, align:'center'});
+      txt(ctx, b.sub, cx, T+ph+32, {size:10, color:C.ink3, align:'center'});
+    });
+    if(showNull)
+      txt(ctx,'shaded = 95th percentile of what that selection procedure reaches on pure noise',
+          L+pw/2, T+ph+50, {size:10.5, color:C.ink3, align:'center'});
+  }
+  document.querySelectorAll('#p-compare .chip').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      document.querySelectorAll('#p-compare .chip').forEach(x=>x.setAttribute('aria-pressed','false'));
+      b.setAttribute('aria-pressed','true'); cur = b.dataset.run; draw();
+    });
+  });
+  document.getElementById('cmp-null').addEventListener('change', draw);
+  onTheme(draw); draw();
+})();
+
+/* ==========================================================================
+   09 — Caveats
+   ========================================================================== */
+(function(){
+  const host = document.getElementById('cav-body'); if(!host) return;
+  const CAVEATS = [
+    {
+      t:'The flip direction is an average of sign-inconsistent differences',
+      sev:'affects a published number',
+      body:`<p>This is the one that changes how you read every cosine on the page. In
+        <code>flip_direction</code>:</p>
+      <pre style="background:var(--sunk);border:1px solid var(--rule-soft);border-radius:4px;padding:.7rem;overflow-x:auto;font-size:12px"><code>maj    = Counter(preds).most_common(1)[0][0]
+donor  = next(i for i, pr in items if pr == maj)
+target = next(i for i, pr in items if pr != maj)
+diffs.append((acts_layer[donor] - acts_layer[target]).numpy())
+...
+d = np.mean(diffs, axis=0)</code></pre>
+      <p>The donor/target polarity is tied to <em>each cluster's own majority answer</em>, not to a
+        fixed yes/no polarity. In a cluster where the majority answered "yes", the difference points
+        along <span class="num">+(yes − no)</span>; in a cluster where the majority answered "no", it
+        points along <span class="num">−(yes − no)</span>. Line 118 then takes a plain mean over all
+        flipped clusters, so the two populations <strong>partially cancel</strong>.</p>
+      <p>The consequences are concrete: the magnitude and the sign of the direction every reported
+        cosine is measured against depend on the accidental yes/no majority mix among the 14 / 26 / 81
+        flipped clusters — which is a natural explanation for why the top feature's cosine is negative
+        in two runs and positive in the third. Cancellation can only <em>reduce</em> the measured
+        alignment, so the reported 0.74 is if anything a floor, but the object is not what the name
+        suggests. <code>experiment_e.py</code> is immune because it never averages across clusters.</p>
+      <p><strong>Fix:</strong> orient each difference to a fixed polarity before averaging — flip the
+        sign whenever the cluster's majority answer is "no" — or fit the direction per cluster and
+        report the distribution instead of the mean.</p>`
+    },
+    {
+      t:'The flip direction and the dictionary live in different spaces',
+      sev:'affects a published number',
+      body:`<p><code>train_sae</code> standardises before training —
+        <code>Xn = (X - mu) / sd</code> — so every decoder column is a direction in
+        <em>standardised</em> space. But <code>run()</code> computes the experiment-C direction from the
+        <em>raw</em> tensor: <code>fdir = flip_direction(acts, meta, flips, device)</code>, where
+        <code>acts = per_layer[layer]</code> is untouched. The reported cosine is therefore between a
+        vector in one space and a vector in another.</p>
+      <p>The transform matters because a difference of activations is a <em>vector</em>: under
+        <code>x → S⁻¹(x − μ)</code> with <code>S = diag(sd)</code>, a difference maps to
+        <code>S⁻¹Δ</code>, then needs renormalising. If <code>sd</code> were constant across the 384
+        dimensions the mismatch would vanish; residual streams are not that even.</p>
+      <p>The PCA baseline is computed on <code>Xn</code>, so it has the <em>same</em> mismatch — the
+        SAE-vs-PCA comparison is at least internally consistent. The random baseline is isotropic in
+        raw space, a third convention.</p>
+      <p><strong>Fix (one line):</strong> <code>fdir = flip_direction((acts - mu) / sd, meta, flips, device)</code>.
+        Try the "score against raw ground truth" switch in panel 04 to see the size of the effect
+        on a case where you know the answer.</p>`
+    },
+    {
+      t:'The random baseline is not the null for a maximum',
+      sev:'affects a published number',
+      body:`<p><code>rand_cos</code> is the mean of 200 single random directions
+        (<span class="num">0.041</span>). The SAE statistic is the maximum over 2048 candidates and
+        the PCA statistic is the maximum over 20. At <span class="num">d = 384</span> the correct
+        reference levels are <span class="num">0.184</span> and <span class="num">0.110</span>
+        respectively, with 95th percentiles <span class="num">0.213</span> and
+        <span class="num">0.153</span>.</p>
+      <p><strong>The finding survives</strong> — 0.737 and 0.519 both clear those bars decisively.
+        <strong>Fix:</strong> replace the <code>rand_cos</code> line with a max-matched null, using the exact
+        identity that <code>cos² ~ Beta(½, (d−1)/2)</code> so it costs nothing — and better, add the
+        placebo-direction control described in <a href="#s7">section 07</a>, which is the only null
+        that also preserves the data geometry. For the point-biserial, a plain label shuffle is the
+        correct null and is three lines.</p>`
+    },
+    {
+      t:'Variance explained is in-sample, and on the small runs the dictionary can memorise',
+      sev:'affects interpretation',
+      body:`<p><code>var_expl = 1 - F.mse_loss(sae(Xn)[0], Xn) / Xn.var()</code> is evaluated on
+        exactly the rows the SAE was fit to; there is no held-out split anywhere in the file. And
+        because <code>Xn</code> is per-dimension standardised, <code>Xn.var()</code> is ≈1, so the
+        reported number is essentially <code>1 − MSE</code>.</p>
+      <p>On the two 1,323-row runs the dictionary has <span class="num">m = 2048</span> atoms for
+        <span class="num">n = 1323</span> samples — more atoms than data points, so a memorising
+        solution exists in principle. That does not mean one was found: 3,000 Adam steps with a hard
+        top-16 selector do not generically land on the one-atom-per-sample corner. The right reading
+        is <em>"memorisation is available, so this number cannot settle the question"</em>, not
+        <em>"this number is meaningless"</em>.</p>
+      <p>And the control is already in your results: <code>results_transfer</code> has
+        <span class="num">n/m = 73,500 / 2,048 ≈ 36</span>, where memorisation is flatly unavailable,
+        and it still reaches <span class="num">0.9907</span> on the same architecture, same
+        <span class="num">k</span>, same layer. That is evidence <em>for</em> the reconstruction being
+        real, not against it.</p>
+      <p><strong>Fix:</strong> hold out 10% of rows — better, 10% of <em>clusters</em>, so paraphrases
+        of the same question do not straddle the split — and report reconstruction on those. Three lines.</p>`
+    },
+    {
+      t:'No causal test of the SAE feature',
+      sev:'biggest missed opportunity',
+      body:`<p>Alignment and prediction are both correlational. <code>_apply_patch</code> already accepts a
+        <code>basis</code>, so patching along the SAE decoder column and measuring net recovery — exactly
+        as experiment C does with the supervised direction — is a small addition that would convert the
+        corroboration into an independent causal result. See the sketch at the end of
+        <a href="#s9">this section</a>.</p>`
+    },
+    {
+      t:'Dead features are never counted',
+      sev:'unknown magnitude',
+      body:`<p>Nothing in <code>train_sae</code> tracks which of the 2048 features ever fire, and there is
+        no auxiliary loss or resampling to revive dead ones — both standard in top-k SAE training precisely
+        because dead features are the default failure mode at this overcompleteness. If a large fraction
+        of the dictionary is dead, the effective <span class="num">m</span> in the max-over-2048 null is
+        smaller than 2048, which would make the corrected null <em>easier</em>, not harder.</p>
+      <p><strong>Fix:</strong> <code>alive = (Z &gt; 0).any(0).sum().item()</code> after training, reported in
+        the JSON. One line, and it also tightens caveat 2. Panel 04 plots exactly this.</p>`
+    },
+    {
+      t:'The reported cosine sign is half-meaningful, which is worse than meaningless',
+      sev:'presentation',
+      body:`<p><code>best_cos = int(np.argmax(np.abs(cos)))</code> selects on the absolute value but the JSON
+        stores the signed number (<span class="num">−0.790</span>, <span class="num">−0.737</span>,
+        <span class="num">+0.593</span>).</p>
+      <p>One end of that sign <em>is</em> meaningful: codes are non-negative (ReLU inside the top-k), so a
+        decoder atom's orientation is fixed — a feature fires <em>along</em> its column, never against it.
+        The other end is not: the flip direction's orientation comes from a donor-minus-target convention
+        where "donor" only means whichever answer was in the majority <em>in that cluster</em>, and by
+        caveat 01 that convention is not even consistent across the clusters being averaged. So the product
+        carries no stable meaning, and a reader comparing signs across the three runs will read
+        structure into a coin flip.</p>
+      <p><strong>Fix:</strong> orient the flip direction to a fixed yes-minus-no polarity (caveat 01), after
+        which the sign becomes genuinely interpretable and worth reporting. Until then, store
+        <code>abs(cos)</code>.</p>`
+    },
+    {
+      t:'One donor and one target per cluster, chosen by position',
+      sev:'adds variance',
+      body:`<p><code>flip_direction</code> takes <code>donor = next(i for i, pr in items if pr == maj)</code>
+        and <code>target = next(i for i, pr in items if pr != maj)</code> — the first matching example in
+        iteration order, not an average. With 26 flipped clusters, using one arbitrary pair per cluster
+        instead of mean(majority) − mean(minority) adds avoidable variance to the direction that everything
+        else is measured against.</p>
+      <p><strong>Fix:</strong> average within each side before differencing. Two lines.</p>`
+    },
+    {
+      t:'One seed, one regime, one layer',
+      sev:'no error bars',
+      body:`<p><code>run()</code> trains a single model (<code>regime="augmented"</code>, seed 0) and a single
+        SAE on it. For a statistic that is a maximum over 2048 candidates, a seed distribution is not a nicety.
+        Experiment C reports recovery across layers 0–4; the SAE is only ever run at layer 1, so the two methods
+        are not compared on the same axis.</p>
+      <p><strong>Fix:</strong> loop seeds 0–7 and layers 0–4, report the distribution. The script already takes
+        <code>--seed</code> and <code>--layer</code>.</p>`
+    },
+    {
+      t:'Register selectivity is an unnormalised mean',
+      sev:'weakest of the three statistics',
+      body:`<p><code>register_selectivity</code> averages the raw activation of one feature within each
+        phenomenon, with no correction for firing rate, for the number of rows per phenomenon, or for the
+        decoder column's norm — and column norms drift, because <code>normalize_decoder()</code> runs only at
+        <code>step % 500 == 0</code> and 3000 steps means the last call is at step 2500, leaving 500 steps of
+        unconstrained rescaling. Cosines are unaffected (<code>feat_dirs</code> renormalises at read-out) but
+        activation magnitudes are not, so these numbers are not comparable across features.</p>
+      <p><strong>Fix:</strong> report the mean activation <em>conditional on firing</em>, plus the firing rate,
+        and renormalise the decoder once more before evaluation.</p>`
+    },
+    {
+      t:'The figure captions disagree with the figure',
+      sev:'cosmetic, but visible',
+      body:`<p><code>scripts/legacy/figures.py</code> plots the bars from the JSON —
+        <span class="num">0.737</span>, <span class="num">0.519</span>, <span class="num">0.043</span> — but
+        hard-codes the caption text as <em>"the SAE feature matches it (0.51), edging out PCA (0.48)"</em>, and
+        <code>fig_sae_concept</code> labels its arrow <em>"cos 0.51"</em> — a figure that loads no JSON at
+        all, so every number in it is literal text. Both figures ship in the README with captions that
+        contradict their own bars.</p>
+      <p>There is a second defect in the same function: <code>ax.set_ylim(0, 0.72)</code> is <em>below</em>
+        the SAE bar's value of 0.737, so the tallest bar is clipped flat against the top of the axes and its
+        data label is drawn outside the plot and never renders. That is why the blue bar in
+        <code>figures/sae_alignment.png</code> is the only one without a number over it.</p>
+      <p><strong>Fix:</strong> interpolate the values into the caption strings the same way the bars are, and
+        set the limit from the data (<code>max(vals) * 1.15</code>).</p>`
+    }
+  ];
+  host.innerHTML = CAVEATS.map((cv,i)=>`
+    <details style="border-bottom:1px solid var(--rule-soft)">
+      <summary style="cursor:pointer;padding:.7rem .2rem;display:flex;gap:.7rem;align-items:baseline;list-style:none">
+        <span style="font-family:${MONO_A};font-size:11px;color:var(--blue);min-width:1.6em">${String(i+1).padStart(2,'0')}</span>
+        <span style="flex:1;font-size:1rem;color:var(--ink)">${cv.t}</span>
+        <span style="font-family:${SANS_A};font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+          color:${i<3?'var(--warn)':'var(--ink-3)'};white-space:nowrap">${cv.sev}</span>
+      </summary>
+      <div style="padding:.2rem .2rem 1rem 2.3rem;font-size:.95rem;color:var(--ink-2)">${cv.body}</div>
+    </details>`).join('');
+})();
+</script>
+
