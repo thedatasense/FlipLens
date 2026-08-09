@@ -1,0 +1,49 @@
+{
+  "regime": "augmented",
+  "seed": 0,
+  "steps": 1500,
+  "depth": 6,
+  "early_stop_step": 75,
+  "val_acc": 1.0,
+  "vision_dropout": 0.0,
+  "use_ground": false,
+  "n_train": 1428,
+  "n_eval_clusters": 133,
+  "trainable_params": 13748736,
+  "accuracy": 1.0,
+  "accuracy_vision_ablated": 1.0,
+  "grounding_gap": 0.0,
+  "flip_rate": 0.0,
+  "eval_split": "test",
+  "lookup": {
+    "n": 133,
+    "n_findings": 50,
+    "n_findings_with_both_answers": 0,
+    "n_questions_in_mixed_findings": 0,
+    "finding_lookup_accuracy": 1.0,
+    "majority_class_accuracy": 0.8421052631578947,
+    "yes_rate": 0.8421052631578947
+  },
+  "accuracy_seen": 1.0,
+  "accuracy_blind": 1.0,
+  "blind_agrees_with_seen": 1.0,
+  "flip_rate_seen": 0.0,
+  "flip_rate_blind": 0.0,
+  "n_stable_clusters": 133,
+  "stable_clusters_blind_agrees": 1.0,
+  "n_eval_rows": 789,
+  "disagreement_with_original_by_register": {
+    "lexical_substitution": 0.0,
+    "syntactic_restructuring": 0.0,
+    "negation_pattern": 0.0,
+    "scope_quantification": 0.0,
+    "specificity_modulation": 0.0
+  },
+  "rows_by_register": {
+    "lexical_substitution": 128,
+    "syntactic_restructuring": 132,
+    "negation_pattern": 132,
+    "scope_quantification": 133,
+    "specificity_modulation": 131
+  }
+}
