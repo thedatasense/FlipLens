@@ -8,7 +8,7 @@ tokens), so a mechanism found here transfers to MedGemma-4B, while letting us ru
 the one experiment the frozen deployed model cannot support: **varying the
 training-phrasing distribution one factor at a time.**
 
-- Weights and feature cache: **[huggingface.co/saillab/babymedgemma](https://huggingface.co/saillab/babymedgemma)**
+- Weights: **[huggingface.co/saillab/babymedgemma](https://huggingface.co/saillab/babymedgemma)**. Feature caches and source images are in the `binesh/tbucket` storage bucket, see [where the heavy artifacts live](#where-the-heavy-artifacts-live)
 - Interactive write-up: **[bineshkumar.me/phd-thesis/causality](https://bineshkumar.me/phd-thesis/causality/)**
 - Design document: [`docs/tiny_vlm_psf_isolation.md`](docs/tiny_vlm_psf_isolation.md)
 
@@ -357,24 +357,54 @@ src/babygemma/            the importable library
 
 scripts/
   data/          download_nih, build_transfer_index, build_scaled_index,
-                 precompute_features, precompute_pooled, encode_shard, merge_shards
+                 build_balanced_index, precompute_features, precompute_pooled,
+                 encode_shard, merge_shards
   train/         train.py (CLI), run_all_gpus.py (grid scheduler)
   experiments/   experiment_a (divergence), experiment_e (rank-1 patching), sae, jlens,
-                 flip_threshold_robustness
-  analysis/      eval_transfer, eval_scaled
+                 jlens_faithfulness, flip_threshold_robustness
+  analysis/      eval_transfer, eval_scaled, text_only_audit, ablation_gate
   hf/            modeling_babymedgemma.py (self-contained wrapper), convert_to_hf.py
   run/           shell drivers that chain the above into full runs
   legacy/        scripts of the retired 1,841-question probe (results under results_gemma/)
 ```
 
-Results directories are documented in [`RESULTS.md`](RESULTS.md). Heavy artifacts
-(`**/model.pt`, `cache/`) are on Hugging Face, not in git.
-(`**/model.pt`, `cache/`) are on Hugging Face, not in git.
+Results directories are documented in [`RESULTS.md`](RESULTS.md).
 
+## Where the heavy artifacts live
 
-The model checkpoints (`**/model.pt`, ~4 GB) and the MedSigLIP feature cache
-(`cache/medsiglip_feats.pt`, ~3 GB) are on Hugging Face, not in git:
-**[saillab/babymedgemma](https://huggingface.co/saillab/babymedgemma)**.
+Nothing over a few megabytes is in git. `cache/` and `**/model.pt` are ignored, and so
+are the generated indices under `data/index_*.json`.
+
+| Artifact | Size | Location | Cost to rebuild |
+|---|---|---|---|
+| Released model weights | 56 MB | [`saillab/babymedgemma`](https://huggingface.co/saillab/babymedgemma) | n/a |
+| MedSigLIP patch features, 4,552 PadChest images | 2.7 GB | bucket `binesh/tbucket`, `fliplens_cache/` | 28 min on an A6000 |
+| MedSigLIP pooled embeddings (the grounding token) | 11 MB | same | 18 min on an A6000 |
+| Balanced index, 17,144 questions | 101 MB | same | seconds, from `padchest_questions.csv` |
+| PadChest source images | 36 GB | bucket `binesh/tbucket`, `padchest/` | download only |
+| Per-run checkpoints (`**/model.pt`) | ~4 GB | not currently published | rerun the grid |
+
+The two cache files are the ones worth fetching. With them no image has to be encoded
+again, and everything else in this repository runs on a laptop.
+
+To continue the work on another machine, including the one-line change `training.py`
+needs to use Apple Metal, see
+[`results_audit/RESUME_ELSEWHERE.md`](results_audit/RESUME_ELSEWHERE.md).
+
+## Benchmark validity, and a gate that runs in one forward pass
+
+A later set of experiments found that the PadChest flip bank cannot measure image
+grounding: its 861 questions span 92 findings and no finding carries both answers, so a
+lookup table on the finding name scores 861/861 and baby-MedGemma reaches **1.000 with
+every vision token zeroed**. Rebuilding the bank with per-finding answer balancing drops
+blind accuracy to **0.497** and the model then earns **+0.120** from the image. On the
+rebuilt bank a gate on the vision-ablation delta admits predictions that are **99.7%
+image-dependent**, using one extra forward pass rather than a second patient's image and
+a radiologist's box.
+
+Full write-up, with the lens-fidelity and attribution-patching results and the three
+places the data contradicts a claim as currently written, in
+[`results_audit/README.md`](results_audit/README.md).
 
 ## Load with transformers
 
