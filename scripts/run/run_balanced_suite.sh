@@ -26,6 +26,18 @@ mkdir -p $OUT
 
 banner() { echo; echo "################ $* ################"; date -u +"%Y-%m-%d %H:%M:%SZ"; }
 
+# Results are committed after every stage, so an interrupted suite still leaves
+# everything it finished on the branch.
+save() {
+    cd /workspace/FlipLens || return
+    git add -A results_audit/ >/dev/null 2>&1
+    git diff --cached --quiet && { echo "[save] nothing new"; return; }
+    git commit -q -m "Balanced-bank suite: $1" \
+        -m "Auto-committed by scripts/run/run_balanced_suite.sh. Adds results only." \
+        -m "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>" \
+        && git push -q origin HEAD && echo "[save] committed and pushed: $1"
+}
+
 # 1. Does the lens predict what the model does, and does it predict the patch?
 #    The single biggest hole in the Jacobian-lens chapter: nothing ever checked that
 #    the lens reading tracks the true margin, or that its difference across a donor
@@ -33,6 +45,7 @@ banner() { echo; echo "################ $* ################"; date -u +"%Y-%m-%d
 banner "1/6  lens fidelity and the attribution-patching validation"
 python3 scripts/experiments/jlens_faithfulness.py --grounding-token \
     --model-steps $STEPS --max-pairs 80 --out $OUT/jlens_faithfulness
+save "lens fidelity and patch validation"
 
 # 2. The grounding token is the whole reason this task is learnable at all. Show it.
 banner "2/6  grounding-token ablation"
@@ -41,6 +54,7 @@ for g in "--grounding-token" ""; do
     python3 scripts/analysis/text_only_audit.py --steps $STEPS $g \
         --out $OUT/ablation_$tag
 done
+save "grounding-token ablation"
 
 # 3. Error bars. jlens and the SAE were each run once, at seed 0, against 8 to 24
 #    seeds everywhere else in the project.
@@ -49,17 +63,20 @@ for s in $SEEDS; do
     python3 scripts/experiments/jlens.py --grounding-token --seed $s \
         --model-steps $STEPS --out $OUT/jlens_s$s
 done
+save "jlens across seeds"
 
 banner "4/6  sparse autoencoder across seeds"
 for s in $SEEDS; do
     python3 scripts/experiments/sae.py --grounding-token --seed $s --layer 1 \
         --model-steps $STEPS --out $OUT/sae_s$s
 done
+save "sparse autoencoder across seeds"
 
 # 5. Does the causal locus hold when the answer actually needs the image?
 banner "5/6  rank-1 causal patching"
 python3 scripts/experiments/experiment_e.py --grounding-token --regime augmented \
     --steps $STEPS --max-clusters 60 --out $OUT/experiment_e
+save "rank-1 causal patching"
 
 # 6. The gate, across seeds, so the accuracy gain gets an interval.
 banner "6/6  ablation gate across seeds"
@@ -67,5 +84,6 @@ for s in $SEEDS; do
     python3 scripts/analysis/ablation_gate.py --grounding-token --seed $s \
         --steps $STEPS --out $OUT/gate_s$s
 done
+save "ablation gate across seeds"
 
 banner "SUITE COMPLETE"
