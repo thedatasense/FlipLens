@@ -145,7 +145,7 @@ Held-out half, 62,769 rows. Answering everything scores 60.6%:
 
 | Rule | Admitted | Accuracy | vs base | Image changed the answer |
 |---|---|---|---|---|
-| No gate | 100% | 60.6% | — | 47.1% |
+| No gate | 100% | 60.6% | baseline | 47.1% |
 | Paraphrases agree | 82.8% | 62.6% | +2.0 | 46.7% |
 | Margin only, 20% coverage | 20.6% | **72.5%** | **+11.8** | 57.2% |
 | Ablation delta, 20% coverage | 20.9% | 67.8% | +7.2 | **99.7%** |
