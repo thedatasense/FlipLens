@@ -78,6 +78,17 @@ def auc(score, pos):
 
 
 def evaluate(name, keep, correct, blind_same, blind_wrong, flip_row, n):
+    """Rates among the admitted rows.
+
+    `accuracy_on_grounded` is reported but is CIRCULAR and must not be quoted as
+    evidence. With a binary answer, a row where the blind prediction differs from the
+    sighted one and is wrong is a row where the sighted one is right, so this quantity
+    is pinned to 1 - blind_same by arithmetic rather than by the gate working. The
+    honest pair is `accuracy` and `image_dependent_share`: how often the gate is right,
+    and how often the image actually changed the answer it admitted. On a per-finding
+    balanced bank the text prior cannot answer anything, so `accuracy` already is
+    accuracy on grounded cases.
+    """
     k = int(keep.sum())
     if not k:
         return {"rule": name, "admitted": 0, "coverage": 0.0}
@@ -86,10 +97,11 @@ def evaluate(name, keep, correct, blind_same, blind_wrong, flip_row, n):
         "admitted": k,
         "coverage": k / n,
         "accuracy": float(correct[keep].mean()),
+        "image_dependent_share": float(1.0 - blind_same[keep].mean()),
         "blind_would_answer_the_same": float(blind_same[keep].mean()),
         "grounded_share": float(blind_wrong[keep].mean()),
-        "accuracy_on_grounded": (float(correct[keep & blind_wrong].mean())
-                                 if (keep & blind_wrong).sum() else float("nan")),
+        "accuracy_on_grounded_CIRCULAR": (float(correct[keep & blind_wrong].mean())
+                                          if (keep & blind_wrong).sum() else float("nan")),
         "n_grounded": int((keep & blind_wrong).sum()),
         "flip_rate_admitted": float(flip_row[keep].mean()),
     }
@@ -159,17 +171,16 @@ def run(steps, seed, regime, out, use_ground=False):
         report.append(evaluate(name, k, correct, blind_same, blind_wrong, flip_row,
                                int(hold.sum())))
 
-    print(f"\n[gate] held-out half, {int(hold.sum())} rows")
-    print(f"  {'rule':40s} {'admit':>7s} {'acc':>7s} {'blind same':>11s} "
-          f"{'grounded':>9s} {'acc there':>10s}")
+    base = float(correct[hold].mean())
+    print(f"\n[gate] held-out half, {int(hold.sum())} rows. "
+          f"Answering everything scores {base * 100:.1f}%.")
+    print(f"  {'rule':40s} {'admit':>7s} {'acc':>7s} {'vs base':>8s} {'image-dependent':>16s}")
     for r in report:
         if not r["admitted"]:
             print(f"  {r['rule']:40s}  admits nothing")
             continue
-        ag = r["accuracy_on_grounded"]
         print(f"  {r['rule']:40s} {r['coverage'] * 100:6.1f}% {r['accuracy'] * 100:6.1f}% "
-              f"{r['blind_would_answer_the_same'] * 100:10.1f}% {r['grounded_share'] * 100:8.1f}% "
-              f"{'   n/a' if ag != ag else f'{ag * 100:9.1f}%'}")
+              f"{(r['accuracy'] - base) * 100:+7.1f} {r['image_dependent_share'] * 100:15.1f}%")
 
     distinct_q = len({(ph[i], int(cl[i])) for i in range(n)})
     result = {**art["result"], "n_eval_rows": n, "auc": aucs, "rules": report,
