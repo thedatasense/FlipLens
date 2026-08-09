@@ -50,8 +50,8 @@ def phen_disagreement(rows):
     return {k: (d / t if t else 0.0) for k, (d, t) in dis.items()}
 
 
-def run(steps, seed, regime, out, arch="nano"):
-    art = train_model(regime=regime, seed=seed, steps=steps, arch=arch)
+def run(steps, seed, regime, out):
+    art = train_model(regime=regime, seed=seed, steps=steps)
     model, ds, device = art["model"], art["eval_ds"], art["device"]
     preds, _, clusters, _ = Mx.predict(model, ds, device)
     flips = Mx.flip_labels(preds, clusters)
@@ -77,10 +77,10 @@ def main():
     ap.add_argument("--steps", type=int, default=1500)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--regime", default="augmented")
-    ap.add_argument("--arch", default="nano", choices=["nano", "gemma"])
+    ap.add_argument("--arch", default="gemma", choices=["gemma"])  # kept for run/ compatibility
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
-    run(a.steps, a.seed, a.regime, a.out, arch=a.arch)
+    run(a.steps, a.seed, a.regime, a.out)
 
 
 if __name__ == "__main__":

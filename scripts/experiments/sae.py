@@ -152,10 +152,10 @@ def register_selectivity(Z, meta, feature):
     return {ph: float(np.mean(v)) for ph, v in by_ph.items()}
 
 
-def run(layer, out, seed=0, m=2048, k=16, arch="nano", use_ground=False, model_steps=1500):
+def run(layer, out, seed=0, m=2048, k=16, use_ground=False, model_steps=1500):
     # the probe being analysed must be converged; the scaled model needs ~8k steps,
     # so analysing it at the old 1,500-step default would describe an undertrained net
-    art = train_model(regime="augmented", seed=seed, arch=arch,
+    art = train_model(regime="augmented", seed=seed,
                       use_ground=use_ground, steps=model_steps)
     model, ds, device = art["model"], art["eval_ds"], art["device"]
     print(f"[sae] model acc={art['result']['accuracy']:.3f} flip={art['result']['flip_rate']:.3f}")
@@ -221,11 +221,11 @@ def main():
     ap.add_argument("--dict", type=int, default=2048)
     ap.add_argument("--topk", type=int, default=16)
     ap.add_argument("--out", default="results/sae")
-    ap.add_argument("--arch", default="nano", choices=["nano", "gemma"])
+    ap.add_argument("--arch", default="gemma", choices=["gemma"])  # kept for run/ compatibility
     ap.add_argument("--grounding-token", action="store_true")
     ap.add_argument("--model-steps", type=int, default=1500)
     a = ap.parse_args()
-    run(a.layer, a.out, seed=a.seed, m=a.dict, k=a.topk, arch=a.arch,
+    run(a.layer, a.out, seed=a.seed, m=a.dict, k=a.topk,
         use_ground=a.grounding_token, model_steps=a.model_steps)
 
 

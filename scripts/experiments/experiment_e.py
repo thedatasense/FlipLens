@@ -44,8 +44,8 @@ def _patch_pred(model, vis, tok, ap, layer, donor_vec, ai_t, basis=None, ground=
     return int(logits.argmax(-1))
 
 
-def run(steps, seed, regime, max_clusters, out, arch="nano", use_ground=False):
-    art = train_model(regime=regime, seed=seed, steps=steps, arch=arch, use_ground=use_ground)
+def run(steps, seed, regime, max_clusters, out, use_ground=False):
+    art = train_model(regime=regime, seed=seed, steps=steps, use_ground=use_ground)
     model, ds, device = art["model"], art["eval_ds"], art["device"]
     model.eval()
     depth = model.cfg.depth
@@ -124,11 +124,11 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--regime", default="adversarial")
     ap.add_argument("--max-clusters", type=int, default=60)
-    ap.add_argument("--arch", default="nano", choices=["nano", "gemma"])
+    ap.add_argument("--arch", default="gemma", choices=["gemma"])  # kept for run/ compatibility
     ap.add_argument("--grounding-token", action="store_true")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
-    run(a.steps, a.seed, a.regime, a.max_clusters, a.out, arch=a.arch,
+    run(a.steps, a.seed, a.regime, a.max_clusters, a.out,
         use_ground=a.grounding_token)
 
 

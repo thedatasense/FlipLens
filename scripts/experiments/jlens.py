@@ -153,7 +153,7 @@ def analyze(rows, depth, flips):
 
 
 def run(seed, arch, out, n_fit=256, use_ground=False, model_steps=1500):
-    art = train_model(regime="augmented", seed=seed, arch=arch,
+    art = train_model(regime="augmented", seed=seed,
                       use_ground=use_ground, steps=model_steps)
     model, ds, device = art["model"], art["eval_ds"], art["device"]
     print(f"[jlens] model acc={art['result']['accuracy']:.3f} flip={art['result']['flip_rate']:.3f}")
@@ -194,7 +194,7 @@ def run(seed, arch, out, n_fit=256, use_ground=False, model_steps=1500):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--arch", default="gemma", choices=["nano", "gemma"])
+    ap.add_argument("--arch", default="gemma", choices=["gemma"])  # kept for run/ compatibility
     ap.add_argument("--grounding-token", action="store_true")
     ap.add_argument("--model-steps", type=int, default=1500)
     ap.add_argument("--n-fit", type=int, default=256)

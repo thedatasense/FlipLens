@@ -8,7 +8,7 @@ tokens), so a mechanism found here transfers to MedGemma-4B, while letting us ru
 the one experiment the frozen deployed model cannot support: **varying the
 training-phrasing distribution one factor at a time.**
 
-- Weights and feature cache: **[huggingface.co/saillab/babymedgemma](https://huggingface.co/saillab/babymedgemma)**
+- Weights: **[huggingface.co/saillab/babymedgemma](https://huggingface.co/saillab/babymedgemma)**. Feature caches and source images are in the `binesh/tbucket` storage bucket, see [where the heavy artifacts live](#where-the-heavy-artifacts-live)
 - Interactive write-up: **[bineshkumar.me/phd-thesis/causality](https://bineshkumar.me/phd-thesis/causality/)**
 - Design document: [`docs/tiny_vlm_psf_isolation.md`](docs/tiny_vlm_psf_isolation.md)
 
@@ -183,25 +183,54 @@ matches the causal flip direction from C.
 
 ![What the sparse autoencoder tests](figures/sae_concept.png)
 
-An unsupervised feature aligns with the causal flip direction at |cosine| 0.74,
-clearly ahead of principal-component analysis at 0.52 and far above a random
-direction's 0.04; a distinct feature predicts flips (point-biserial 0.43). The
-flip axis is unsupervised-recoverable, not an artifact of the supervised
+On the retired 1,841-question probe (`results_gemma/sae_gemma/`, 231 paraphrase
+clusters, d = 384), an unsupervised feature aligns with the causal flip direction
+at **|cosine| 0.74**, ahead of principal-component analysis at 0.52. Both are
+*best-of-many* statistics, so the reference has to be selected the same way: the
+best of 2,048 random directions reaches 0.18 by chance (95th percentile 0.21) and
+the best of 20 reaches 0.11, against a single random direction's 0.04. Each clears
+its matched null by roughly four times. That same feature independently predicts
+flips (point-biserial 0.42, p = 2e-11); it was selected by alignment with the
+causal direction rather than by its own flip correlation, so that is one test
+rather than a search over the dictionary.
+
+On the scaled grounded model (`results_transfer/sae/`, 73,500 evaluations) the
+alignment is weaker but survives: |cosine| 0.59 against the same 0.18 null, and
+point-biserial 0.13 against a matched max-of-2,048 null of 0.09. The flip axis is
+unsupervised-recoverable on both models, not an artifact of the supervised
 difference-of-means.
 
 ![An unsupervised feature recovers the causal flip axis](figures/sae_alignment.png)
 
+The method, the corrected nulls, and eleven implementation caveats with the fix for
+each are worked through interactively in
+[`docs/sae_explainer.html`](docs/sae_explainer.html).
+
 **A Jacobian lens (`jlens.py`)** reads the yes/no margin each layer is disposed to
-produce (the average input-output Jacobian). For two phrasings of one question the
-readouts track together early, then commit to opposite answers.
+produce — the average input-output Jacobian, differentiated through the remaining
+layers rather than assuming them away.
 
-![What the Jacobian lens shows](figures/jlens_concept.png)
+![The idea behind the Jacobian lens, drawn schematically](figures/jlens_concept.png)
 
-Across paraphrases, flipping clusters diverge about **8.9x** more than stable ones,
-from layer 0, with a divergence-vs-flip correlation of **0.81**. A lens and a
-causal patch, with different assumptions, place the flip in the same early layers.
+*The figure above is a schematic of the idea, not plotted data.* The measurement
+below is the result, and its shape differs: the phrasings never track together.
+
+On the retired 1,841-question probe (`results_gemma/jlens_gemma/`, 231 clusters),
+flipping clusters' lens margins diverge **8.9x** more than stable ones, already at
+layer 0 and flat across all six layers, with a divergence-vs-flip correlation of
+**0.81**. On the scaled grounded model (`results_transfer/jlens/`, 1,500 clusters)
+the same statistics are **2.2x** and **0.26**. The lens and the rank-1 causal patch
+agree that the flip is decided at or before the first decoder layer, but neither
+localises it further: both sit at their ceiling from layer 0 onward.
 
 ![The lens splits flipping from stable paraphrases](figures/jlens_divergence.png)
+
+The lens is the first-order approximation of that same patch, not an independent
+method, so their agreement is a consistency check rather than corroboration; the
+independent leg is the unsupervised SAE direction above. The method, its lineage
+from the logit and tuned lenses, and eleven implementation caveats with the fix for
+each are worked through interactively in
+[`docs/jlens_explainer.html`](docs/jlens_explainer.html).
 
 ## Why binary accuracy cannot tell a blind model from a seeing one
 
@@ -225,6 +254,14 @@ exactly 50% accuracy, while ranking both correctly.
 MedSigLIP itself pays this tax: **AUC 0.734 but accuracy 0.681** on the same task.
 **Report AUC.** Accuracy alone cannot detect whether a medical VLM is using the image,
 which is the metric the field mostly uses.
+
+The same margin also works as a single-pass detector, and it is the best one available:
+**AUC 0.974 for paraphrase flips on both held-out hospitals** (`detect_percase.json`),
+against **0.47 to 0.52** for detecting an answer that ignored the image. Flips are
+catchable in one forward pass. Blind answers are not. The detectors, the entropy filter,
+and the deployment gate that admits 33.0% at 96.8% accuracy while 93% of what it admits
+is answerable from the question text alone are worked through interactively in
+[`docs/uncertainty_and_gates_explainer.html`](docs/uncertainty_and_gates_explainer.html).
 
 The in-distribution flip-rate results are *not* affected by this. A threshold sweep
 holds the augmented < canonical ordering at every non-degenerate offset, and a
@@ -320,24 +357,54 @@ src/babygemma/            the importable library
 
 scripts/
   data/          download_nih, build_transfer_index, build_scaled_index,
-                 precompute_features, precompute_pooled, encode_shard, merge_shards
+                 build_balanced_index, precompute_features, precompute_pooled,
+                 encode_shard, merge_shards
   train/         train.py (CLI), run_all_gpus.py (grid scheduler)
   experiments/   experiment_a (divergence), experiment_e (rank-1 patching), sae, jlens,
-                 flip_threshold_robustness
-  analysis/      eval_transfer, eval_scaled
+                 jlens_faithfulness, flip_threshold_robustness
+  analysis/      eval_transfer, eval_scaled, text_only_audit, ablation_gate
   hf/            modeling_babymedgemma.py (self-contained wrapper), convert_to_hf.py
   run/           shell drivers that chain the above into full runs
   legacy/        scripts of the retired 1,841-question probe (results under results_gemma/)
 ```
 
-Results directories are documented in [`RESULTS.md`](RESULTS.md). Heavy artifacts
-(`**/model.pt`, `cache/`) are on Hugging Face, not in git.
-(`**/model.pt`, `cache/`) are on Hugging Face, not in git.
+Results directories are documented in [`RESULTS.md`](RESULTS.md).
 
+## Where the heavy artifacts live
 
-The model checkpoints (`**/model.pt`, ~4 GB) and the MedSigLIP feature cache
-(`cache/medsiglip_feats.pt`, ~3 GB) are on Hugging Face, not in git:
-**[saillab/babymedgemma](https://huggingface.co/saillab/babymedgemma)**.
+Nothing over a few megabytes is in git. `cache/` and `**/model.pt` are ignored, and so
+are the generated indices under `data/index_*.json`.
+
+| Artifact | Size | Location | Cost to rebuild |
+|---|---|---|---|
+| Released model weights | 56 MB | [`saillab/babymedgemma`](https://huggingface.co/saillab/babymedgemma) | n/a |
+| MedSigLIP patch features, 4,552 PadChest images | 2.7 GB | bucket `binesh/tbucket`, `fliplens_cache/` | 28 min on an A6000 |
+| MedSigLIP pooled embeddings (the grounding token) | 11 MB | same | 18 min on an A6000 |
+| Balanced index, 17,144 questions | 101 MB | same | seconds, from `padchest_questions.csv` |
+| PadChest source images | 36 GB | bucket `binesh/tbucket`, `padchest/` | download only |
+| Per-run checkpoints (`**/model.pt`) | ~4 GB | not currently published | rerun the grid |
+
+The two cache files are the ones worth fetching. With them no image has to be encoded
+again, and everything else in this repository runs on a laptop.
+
+To continue the work on another machine, including the one-line change `training.py`
+needs to use Apple Metal, see
+[`results_audit/RESUME_ELSEWHERE.md`](results_audit/RESUME_ELSEWHERE.md).
+
+## Benchmark validity, and a gate that runs in one forward pass
+
+A later set of experiments found that the PadChest flip bank cannot measure image
+grounding: its 861 questions span 92 findings and no finding carries both answers, so a
+lookup table on the finding name scores 861/861 and baby-MedGemma reaches **1.000 with
+every vision token zeroed**. Rebuilding the bank with per-finding answer balancing drops
+blind accuracy to **0.497** and the model then earns **+0.120** from the image. On the
+rebuilt bank a gate on the vision-ablation delta admits predictions that are **99.7%
+image-dependent**, using one extra forward pass rather than a second patient's image and
+a radiologist's box.
+
+Full write-up, with the lens-fidelity and attribution-patching results and the three
+places the data contradicts a claim as currently written, in
+[`results_audit/README.md`](results_audit/README.md).
 
 ## Load with transformers
 

@@ -67,9 +67,22 @@ def load_mimic() -> list[dict]:
 
 
 def load_padchest() -> list[dict]:
+    """PadChest flip bank -> one record per question, with its paraphrase cluster.
+
+    Rows carrying `op_match == "False"` are dropped. Those are the 750
+    `negation_pattern` rewrites that turn a presence question into an exclusion one
+    ("Can you rule out aortic elongation?" against "Is there aortic elongation?"),
+    so they INVERT the answer and cannot share a cluster with the original. 87.1% of
+    the 861 clusters contain one. This is the mixed-question defect that
+    `templates.py` documents and that the newer template bank already avoids.
+
+    Set NANO_KEEP_OPERATOR_VARIANTS=1 to restore the previous behaviour, which is
+    what the retired 1,841-question probe under results_gemma/ was built with.
+    """
     p = os.path.join(PROJECT, "dataset/padchest/padchest_flip_bank.csv")
     if not os.path.exists(p):
         return []
+    keep_inverting = bool(os.environ.get("NANO_KEEP_OPERATOR_VARIANTS"))
     rows = list(csv.DictReader(open(p)))
     by_q = defaultdict(list)
     for r in rows:
@@ -84,7 +97,8 @@ def load_padchest() -> list[dict]:
         if ans not in ("yes", "no"):
             continue
         paras = [{"text": r["paraphrase"], "phenomenon": r.get("phenomenon")}
-                 for r in rs if r.get("paraphrase")]
+                 for r in rs if r.get("paraphrase")
+                 and (keep_inverting or str(r.get("op_match", "True")) != "False")]
         uid = f"padchest:{qid}"
         out.append({
             "uid": uid,

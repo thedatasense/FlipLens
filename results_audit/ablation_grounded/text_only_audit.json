@@ -1,0 +1,47 @@
+{
+  "regime": "augmented",
+  "seed": 0,
+  "steps": 6000,
+  "depth": 6,
+  "early_stop_step": 5400,
+  "val_acc": 0.6219464908879411,
+  "vision_dropout": 0.0,
+  "use_ground": true,
+  "n_train": 154752,
+  "n_eval_clusters": 2561,
+  "trainable_params": 14178048,
+  "accuracy": 0.6018774553944968,
+  "accuracy_vision_ablated": 0.4935572042171027,
+  "grounding_gap": 0.10832025117739408,
+  "flip_rate": 0.19133151112846544,
+  "eval_split": "test",
+  "lookup": {
+    "n": 2561,
+    "n_findings": 94,
+    "n_findings_with_both_answers": 87,
+    "n_questions_in_mixed_findings": 2545,
+    "finding_lookup_accuracy": 0.5595470519328387,
+    "majority_class_accuracy": 0.5029285435376806,
+    "yes_rate": 0.4970714564623194
+  },
+  "accuracy_seen": 0.6018774553944968,
+  "accuracy_blind": 0.4935572042171027,
+  "blind_agrees_with_seen": 0.5112161225286679,
+  "flip_rate_seen": 0.19133151112846544,
+  "flip_rate_blind": 0.0023428348301444747,
+  "n_stable_clusters": 2071,
+  "stable_clusters_blind_agrees": 0.5045871559633027,
+  "n_eval_rows": 125489,
+  "disagreement_with_original_by_register": {
+    "lexical_substitution": 0.033320317584276976,
+    "syntactic_restructuring": 0.03735519979174801,
+    "scope_quantification": 0.030391774046596383,
+    "specificity_modulation": 0.06569699336196798
+  },
+  "rows_by_register": {
+    "lexical_substitution": 30732,
+    "syntactic_restructuring": 30732,
+    "scope_quantification": 30732,
+    "specificity_modulation": 30732
+  }
+}
